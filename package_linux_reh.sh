@@ -25,17 +25,17 @@ VSCODE_HOST_MOUNT="$( pwd )"
 export VSCODE_HOST_MOUNT
 
 if [[ "${VSCODE_ARCH}" == "x64" || "${VSCODE_ARCH}" == "arm64" ]]; then
-  VSCODE_REMOTE_DEPENDENCIES_CONTAINER_NAME="vscodium/vscodium-linux-build-agent:centos7-devtoolset8-${VSCODE_ARCH}"
+  VSCODE_REMOTE_DEPENDENCIES_CONTAINER_NAME="codex/codex-linux-build-agent:centos7-devtoolset8-${VSCODE_ARCH}"
 elif [[ "${VSCODE_ARCH}" == "armhf" ]]; then
-  VSCODE_REMOTE_DEPENDENCIES_CONTAINER_NAME="vscodium/vscodium-linux-build-agent:bionic-devtoolset-arm32v7"
+  VSCODE_REMOTE_DEPENDENCIES_CONTAINER_NAME="codex/codex-linux-build-agent:bionic-devtoolset-arm32v7"
 elif [[ "${VSCODE_ARCH}" == "ppc64le" ]]; then
-  VSCODE_REMOTE_DEPENDENCIES_CONTAINER_NAME="vscodium/vscodium-linux-build-agent:bionic-devtoolset-ppc64le"
+  VSCODE_REMOTE_DEPENDENCIES_CONTAINER_NAME="codex/codex-linux-build-agent:bionic-devtoolset-ppc64le"
   export ELECTRON_SKIP_BINARY_DOWNLOAD=1
   export PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
-  export VSCODE_SYSROOT_REPO='VSCodium/vscode-linux-build-agent'
+  export VSCODE_SYSROOT_REPO='Codex/vscode-linux-build-agent'
   export VSCODE_SYSROOT_VERSION='20240129-253798'
 elif [[ "${VSCODE_ARCH}" == "riscv64" ]]; then
-  VSCODE_REMOTE_DEPENDENCIES_CONTAINER_NAME="vscodium/vscodium-linux-build-agent:focal-devtoolset-riscv64"
+  VSCODE_REMOTE_DEPENDENCIES_CONTAINER_NAME="codex/codex-linux-build-agent:focal-devtoolset-riscv64"
   export ELECTRON_SKIP_BINARY_DOWNLOAD=1
   export PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
   # Unofficial RISC-V nodejs builds doesn't provide v16.x

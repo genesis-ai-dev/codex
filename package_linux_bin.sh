@@ -17,7 +17,7 @@ export VSCODE_SKIP_NODE_VERSION_CHECK=1
 export VSCODE_SYSROOT_PREFIX='-glibc-2.17'
 
 if [[ "${VSCODE_ARCH}" == "ppc64le" ]]; then
-  export VSCODE_SYSROOT_REPO='VSCodium/vscode-linux-build-agent'
+  export VSCODE_SYSROOT_REPO='Codex/vscode-linux-build-agent'
   export VSCODE_SYSROOT_VERSION='20240129-253798'
   export VSCODE_SYSROOT_PREFIX='-glibc-2.28'
 fi
