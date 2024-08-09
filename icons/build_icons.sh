@@ -8,64 +8,93 @@ set -e
 
 QUALITY="stable"
 COLOR="blue1"
+CUSTOM_LOGO="./logo/codex-logo-2024.svg"
 
 while getopts ":i" opt; do
   case "$opt" in
-    i)
-      export QUALITY="insider"
-      export COLOR="orange1"
-      ;;
-    *)
-      ;;
+  i)
+    export QUALITY="insider"
+    export COLOR="orange1"
+    ;;
+  *) ;;
   esac
 done
 
 check_programs() { # {{{
+  missing_programs=()
   for arg in "$@"; do
-    if ! command -v "${arg}" &> /dev/null; then
-      echo "${arg} could not be found"
-      exit 0
+    if ! command -v "${arg}" &>/dev/null; then
+      missing_programs+=("${arg}")
     fi
   done
+
+  if [ ${#missing_programs[@]} -ne 0 ]; then
+    echo "The following required programs are missing:"
+    for program in "${missing_programs[@]}"; do
+      echo "- ${program}"
+    done
+    echo "Please install the missing programs and try again."
+    echo "You can usually install these with your package manager."
+    echo "For example, on macOS with Homebrew:"
+    echo "brew install imagemagick icoutils librsvg gnu-sed"
+    exit 1
+  fi
 } # }}}
 
-check_programs "icns2png" "composite" "convert" "png2icns" "icotool" "rsvg-convert" "sed"
+check_programs "composite" "convert" "png2ico" "icotool" "rsvg-convert" "gsed"
 
-. ./utils.sh
+# . ./utils.sh
 
 SRC_PREFIX=""
 VSCODE_PREFIX=""
 
 build_darwin_main() { # {{{
   if [[ ! -f "${SRC_PREFIX}src/${QUALITY}/resources/darwin/code.icns" ]]; then
-    rsvg-convert -w 655 -h 655 "icons/${QUALITY}/codium_cnl.svg" -o "code_logo.png"
-    composite "code_logo.png" -gravity center "icons/template_macos.png" "code_1024.png"
+    if [[ ! -f "icons/template_macos.png" ]]; then
+      echo "Error: 'icons/template_macos.png' is missing."
+      echo "Please ensure this file exists in the 'icons' directory."
+      return 1
+    fi
+
+    rsvg-convert -w 655 -h 655 "${CUSTOM_LOGO}" -o "code_1024.png"
+    if [[ ! -f "code_1024.png" ]]; then
+      echo "Error: Failed to create 'code_1024.png'."
+      echo "Please check if '${CUSTOM_LOGO}' exists and is accessible."
+      return 1
+    fi
+
+    composite "code_1024.png" -gravity center "icons/template_macos.png" "code_1024.png"
     convert "code_1024.png" -resize 512x512 code_512.png
     convert "code_1024.png" -resize 256x256 code_256.png
     convert "code_1024.png" -resize 128x128 code_128.png
 
-    png2icns "${SRC_PREFIX}src/${QUALITY}/resources/darwin/code.icns" code_512.png code_256.png code_128.png
+    png2ico "${SRC_PREFIX}src/${QUALITY}/resources/darwin/code.icns" code_512.png code_256.png code_128.png
 
-    rm code_1024.png code_512.png code_256.png code_128.png code_logo.png
+    rm code_1024.png code_512.png code_256.png code_128.png
   fi
 } # }}}
 
 build_darwin_types() { # {{{
-  rsvg-convert -w 128 -h 128 "icons/${QUALITY}/codium_cnl_w80_b8.svg" -o "code_logo.png"
+  rsvg-convert -w 128 -h 128 "${CUSTOM_LOGO}" -o "code_logo.png"
 
   for file in "${VSCODE_PREFIX}"vscode/resources/darwin/*; do
     if [[ -f "${file}" ]]; then
       name=$(basename "${file}" '.icns')
 
       if [[ "${name}" != 'code' ]] && [[ ! -f "${SRC_PREFIX}src/${QUALITY}/resources/darwin/${name}.icns" ]]; then
-        icns2png -x -s 512x512 "${file}" -o .
+        # Use sips (pre-installed on macOS) or convert (from ImageMagick)
+        if command -v sips &>/dev/null; then
+          sips -s format png "${file}" --out "${name}_512x512x32.png"
+        else
+          convert "${file}" "${name}_512x512x32.png"
+        fi
 
         composite -blend 100% -geometry +323+365 "icons/corner_512.png" "${name}_512x512x32.png" "${name}.png"
         composite -geometry +359+374 "code_logo.png" "${name}.png" "${name}.png"
 
         convert "${name}.png" -resize 256x256 "${name}_256.png"
 
-        png2icns "${SRC_PREFIX}src/${QUALITY}/resources/darwin/${name}.icns" "${name}.png" "${name}_256.png"
+        png2ico "${SRC_PREFIX}src/${QUALITY}/resources/darwin/${name}.icns" "${name}.png" "${name}_256.png"
 
         rm "${name}_512x512x32.png" "${name}.png" "${name}_256.png"
       fi
@@ -77,7 +106,7 @@ build_darwin_types() { # {{{
 
 build_linux_main() { # {{{
   if [[ ! -f "${SRC_PREFIX}src/${QUALITY}/resources/linux/code.png" ]]; then
-    wget "https://raw.githubusercontent.com/VSCodium/icons/main/icons/linux/circle1/${COLOR}/paulo22s.png" -O "${SRC_PREFIX}src/${QUALITY}/resources/linux/code.png"
+    rsvg-convert -w 256 -h 256 "${CUSTOM_LOGO}" -o "${SRC_PREFIX}src/${QUALITY}/resources/linux/code.png"
   fi
 
   mkdir -p "${SRC_PREFIX}src/${QUALITY}/resources/linux/rpm"
@@ -89,14 +118,16 @@ build_linux_main() { # {{{
 
 build_media() { # {{{
   if [[ ! -f "${SRC_PREFIX}src/${QUALITY}/src/vs/workbench/browser/media/code-icon.svg" ]]; then
-    cp "icons/${QUALITY}/codium_clt.svg" "${SRC_PREFIX}src/${QUALITY}/src/vs/workbench/browser/media/code-icon.svg"
+    cp "${CUSTOM_LOGO}" "${SRC_PREFIX}src/${QUALITY}/src/vs/workbench/browser/media/code-icon.svg"
     gsed -i 's|width="100" height="100"|width="1024" height="1024"|' "${SRC_PREFIX}src/${QUALITY}/src/vs/workbench/browser/media/code-icon.svg"
   fi
 } # }}}
 
 build_windows_main() { # {{{
   if [[ ! -f "${SRC_PREFIX}src/${QUALITY}/resources/win32/code.ico" ]]; then
-    wget "https://raw.githubusercontent.com/VSCodium/icons/main/icons/win32/nobg/${COLOR}/paulo22s.ico" -O "${SRC_PREFIX}src/${QUALITY}/resources/win32/code.ico"
+    rsvg-convert -w 256 -h 256 "${CUSTOM_LOGO}" -o "code_256.png"
+    convert "code_256.png" -define icon:auto-resize=256,128,64,48,32,16 "${SRC_PREFIX}src/${QUALITY}/resources/win32/code.ico"
+    rm "code_256.png"
   fi
 } # }}}
 
@@ -116,7 +147,7 @@ build_windows_type() {
       convert -size "${IMG_SIZE}" "${IMG_BG_COLOR}" "${FILE_PATH}"
     fi
 
-    rsvg-convert -w "${LOGO_SIZE}" -h "${LOGO_SIZE}" "icons/${QUALITY}/codium_cnl.svg" -o "code_logo.png"
+    rsvg-convert -w "${LOGO_SIZE}" -h "${LOGO_SIZE}" "${CUSTOM_LOGO}" -o "code_logo.png"
 
     composite -gravity "${GRAVITY}" "code_logo.png" "${FILE_PATH}" "${FILE_PATH}"
   fi
@@ -125,7 +156,7 @@ build_windows_type() {
 build_windows_types() { # {{{
   mkdir -p "${SRC_PREFIX}src/${QUALITY}/resources/win32"
 
-  rsvg-convert -b "#F5F6F7" -w 64 -h 64 "icons/${QUALITY}/codium_cnl.svg" -o "code_logo.png"
+  rsvg-convert -b "#F5F6F7" -w 64 -h 64 "${CUSTOM_LOGO}" -o "code_logo.png"
 
   for file in "${VSCODE_PREFIX}"vscode/resources/win32/*.ico; do
     if [[ -f "${file}" ]]; then
@@ -174,4 +205,10 @@ if [[ "${0}" == "${BASH_SOURCE[0]}" ]]; then
   build_windows_types
 
   build_media
+fi
+
+# At the end of the script, add error handling:
+if ! build_darwin_main; then
+  echo "Error occurred in build_darwin_main. Exiting."
+  exit 1
 fi
