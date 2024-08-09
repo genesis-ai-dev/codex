@@ -1,7 +1,7 @@
 <div id="vscodium-logo" align="center">
     <br />
     <img src="./icons/stable/codium_cnl.svg" alt="VSCodium Logo" width="200"/>
-    <h1>VSCodium</h1>
+    <h1><span style="text-decoration: line-through;">VSCodium</span> Codex</h1>
     <h3>Free/Libre Open Source Software Binaries of VS Code</h3>
 </div>
 
