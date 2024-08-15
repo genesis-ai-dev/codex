@@ -4,17 +4,24 @@
 set -e
 
 # DEBUG
-# set -o xtrace
+set -x  # Enable debug mode to print each command
+
+echo "Script started"
 
 QUALITY="stable"
 COLOR="blue1"
 CUSTOM_LOGO="./logo/codex-logo-2024.svg"
 
-while getopts ":i" opt; do
+FORCE_REBUILD=false
+
+while getopts ":if" opt; do
   case "$opt" in
   i)
     export QUALITY="insider"
     export COLOR="orange1"
+    ;;
+  f)
+    FORCE_REBUILD=true
     ;;
   *) ;;
   esac
@@ -41,7 +48,7 @@ check_programs() { # {{{
   fi
 } # }}}
 
-check_programs "composite" "convert" "png2ico" "icotool" "rsvg-convert" "gsed"
+check_programs "composite" "magick" "png2icns" "icotool" "rsvg-convert" "gsed" "identify"
 
 # . ./utils.sh
 
@@ -49,28 +56,38 @@ SRC_PREFIX=""
 VSCODE_PREFIX=""
 
 build_darwin_main() { # {{{
-  if [[ ! -f "${SRC_PREFIX}src/${QUALITY}/resources/darwin/code.icns" ]]; then
+  if [[ ! -f "${SRC_PREFIX}src/${QUALITY}/resources/darwin/Codex.icns" ]] || [[ "${FORCE_REBUILD}" = true ]]; then
     if [[ ! -f "icons/template_macos.png" ]]; then
       echo "Error: 'icons/template_macos.png' is missing."
       echo "Please ensure this file exists in the 'icons' directory."
       return 1
     fi
 
-    rsvg-convert -w 655 -h 655 "${CUSTOM_LOGO}" -o "code_1024.png"
+    echo "Checking input image size..."
+    identify -format "Input image size: %wx%h\n" "${CUSTOM_LOGO}"
+
+    rsvg-convert -w 1024 -h 1024 "${CUSTOM_LOGO}" -o "code_1024.png"
     if [[ ! -f "code_1024.png" ]]; then
       echo "Error: Failed to create 'code_1024.png'."
       echo "Please check if '${CUSTOM_LOGO}' exists and is accessible."
       return 1
     fi
 
-    composite "code_1024.png" -gravity center "icons/template_macos.png" "code_1024.png"
-    convert "code_1024.png" -resize 512x512 code_512.png
-    convert "code_1024.png" -resize 256x256 code_256.png
-    convert "code_1024.png" -resize 128x128 code_128.png
+    echo "Checking generated image sizes..."
+    identify -format "code_1024.png size: %wx%h\n" "code_1024.png"
 
-    png2ico "${SRC_PREFIX}src/${QUALITY}/resources/darwin/code.icns" code_512.png code_256.png code_128.png
+    magick composite "code_1024.png" -gravity center "icons/template_macos.png" "code_1024.png"
+    magick "code_1024.png" -resize 256x256 code_256.png
+    magick "code_1024.png" -resize 128x128 code_128.png
+    magick "code_1024.png" -resize 32x32 code_32.png
 
-    rm code_1024.png code_512.png code_256.png code_128.png
+    echo "Checking resized image sizes..."
+    identify -format "%f size: %wx%h\n" code_256.png code_128.png code_32.png
+
+    # Use png2icns for macOS icon creation
+    png2icns "${SRC_PREFIX}src/${QUALITY}/resources/darwin/Codex.icns" code_256.png code_128.png code_32.png
+
+    rm code_1024.png code_256.png code_128.png code_32.png
   fi
 } # }}}
 
@@ -81,20 +98,20 @@ build_darwin_types() { # {{{
     if [[ -f "${file}" ]]; then
       name=$(basename "${file}" '.icns')
 
-      if [[ "${name}" != 'code' ]] && [[ ! -f "${SRC_PREFIX}src/${QUALITY}/resources/darwin/${name}.icns" ]]; then
+      if [[ "${name}" != 'Codex' ]] && [[ ! -f "${SRC_PREFIX}src/${QUALITY}/resources/darwin/${name}.icns" ]] || [[ "${FORCE_REBUILD}" = true ]]; then
         # Use sips (pre-installed on macOS) or convert (from ImageMagick)
         if command -v sips &>/dev/null; then
           sips -s format png "${file}" --out "${name}_512x512x32.png"
         else
-          convert "${file}" "${name}_512x512x32.png"
+          magick "${file}" "${name}_512x512x32.png"
         fi
 
-        composite -blend 100% -geometry +323+365 "icons/corner_512.png" "${name}_512x512x32.png" "${name}.png"
-        composite -geometry +359+374 "code_logo.png" "${name}.png" "${name}.png"
+        magick composite -blend 100% -geometry +323+365 "icons/corner_512.png" "${name}_512x512x32.png" "${name}.png"
+        magick composite -geometry +359+374 "code_logo.png" "${name}.png" "${name}.png"
 
-        convert "${name}.png" -resize 256x256 "${name}_256.png"
+        magick "${name}.png" -resize 256x256 "${name}_256.png"
 
-        png2ico "${SRC_PREFIX}src/${QUALITY}/resources/darwin/${name}.icns" "${name}.png" "${name}_256.png"
+        png2icns "${SRC_PREFIX}src/${QUALITY}/resources/darwin/${name}.icns" "${name}.png" "${name}_256.png"
 
         rm "${name}_512x512x32.png" "${name}.png" "${name}_256.png"
       fi
@@ -105,28 +122,24 @@ build_darwin_types() { # {{{
 } # }}}
 
 build_linux_main() { # {{{
-  if [[ ! -f "${SRC_PREFIX}src/${QUALITY}/resources/linux/code.png" ]]; then
+  if [[ ! -f "${SRC_PREFIX}src/${QUALITY}/resources/linux/code.png" ]] || [[ "${FORCE_REBUILD}" = true ]]; then
     rsvg-convert -w 256 -h 256 "${CUSTOM_LOGO}" -o "${SRC_PREFIX}src/${QUALITY}/resources/linux/code.png"
-  fi
-
-  mkdir -p "${SRC_PREFIX}src/${QUALITY}/resources/linux/rpm"
-
-  if [[ ! -f "${SRC_PREFIX}src/${QUALITY}/resources/linux/rpm/code.xpm" ]]; then
-    convert "${SRC_PREFIX}src/${QUALITY}/resources/linux/code.png" "${SRC_PREFIX}src/${QUALITY}/resources/linux/rpm/code.xpm"
+    mkdir -p "${SRC_PREFIX}src/${QUALITY}/resources/linux/rpm"
+    magick "${SRC_PREFIX}src/${QUALITY}/resources/linux/code.png" "${SRC_PREFIX}src/${QUALITY}/resources/linux/rpm/code.xpm"
   fi
 } # }}}
 
 build_media() { # {{{
-  if [[ ! -f "${SRC_PREFIX}src/${QUALITY}/src/vs/workbench/browser/media/code-icon.svg" ]]; then
+  if [[ ! -f "${SRC_PREFIX}src/${QUALITY}/src/vs/workbench/browser/media/code-icon.svg" ]] || [[ "${FORCE_REBUILD}" = true ]]; then
     cp "${CUSTOM_LOGO}" "${SRC_PREFIX}src/${QUALITY}/src/vs/workbench/browser/media/code-icon.svg"
     gsed -i 's|width="100" height="100"|width="1024" height="1024"|' "${SRC_PREFIX}src/${QUALITY}/src/vs/workbench/browser/media/code-icon.svg"
   fi
 } # }}}
 
 build_windows_main() { # {{{
-  if [[ ! -f "${SRC_PREFIX}src/${QUALITY}/resources/win32/code.ico" ]]; then
+  if [[ ! -f "${SRC_PREFIX}src/${QUALITY}/resources/win32/code.ico" ]] || [[ "${FORCE_REBUILD}" = true ]]; then
     rsvg-convert -w 256 -h 256 "${CUSTOM_LOGO}" -o "code_256.png"
-    convert "code_256.png" -define icon:auto-resize=256,128,64,48,32,16 "${SRC_PREFIX}src/${QUALITY}/resources/win32/code.ico"
+    magick "code_256.png" -define icon:auto-resize=256,128,64,48,32,16 "${SRC_PREFIX}src/${QUALITY}/resources/win32/code.ico"
     rm "code_256.png"
   fi
 } # }}}
@@ -140,16 +153,16 @@ build_windows_type() {
   LOGO_SIZE="$4"
   GRAVITY="$5"
 
-  if [[ ! -f "${FILE_PATH}" ]]; then
+  if [[ ! -f "${FILE_PATH}" ]] || [[ "${FORCE_REBUILD}" = true ]]; then
     if [[ "${FILE_PATH##*.}" == "png" ]]; then
-      convert -size "${IMG_SIZE}" "${IMG_BG_COLOR}" PNG32:"${FILE_PATH}"
+      magick -size "${IMG_SIZE}" "${IMG_BG_COLOR}" PNG32:"${FILE_PATH}"
     else
-      convert -size "${IMG_SIZE}" "${IMG_BG_COLOR}" "${FILE_PATH}"
+      magick -size "${IMG_SIZE}" "${IMG_BG_COLOR}" "${FILE_PATH}"
     fi
 
     rsvg-convert -w "${LOGO_SIZE}" -h "${LOGO_SIZE}" "${CUSTOM_LOGO}" -o "code_logo.png"
 
-    composite -gravity "${GRAVITY}" "code_logo.png" "${FILE_PATH}" "${FILE_PATH}"
+    magick composite -gravity "${GRAVITY}" "code_logo.png" "${FILE_PATH}" "${FILE_PATH}"
   fi
 }
 
@@ -162,12 +175,12 @@ build_windows_types() { # {{{
     if [[ -f "${file}" ]]; then
       name=$(basename "${file}" '.ico')
 
-      if [[ "${name}" != 'code' ]] && [[ ! -f "${SRC_PREFIX}src/${QUALITY}/resources/win32/${name}.ico" ]]; then
+      if [[ "${name}" != 'code' ]] && [[ ! -f "${SRC_PREFIX}src/${QUALITY}/resources/win32/${name}.ico" ]] || [[ "${FORCE_REBUILD}" = true ]]; then
         icotool -x -w 256 "${file}"
 
-        composite -geometry +150+185 "code_logo.png" "${name}_9_256x256x32.png" "${name}.png"
+        magick composite -geometry +150+185 "code_logo.png" "${name}_9_256x256x32.png" "${name}.png"
 
-        convert "${name}.png" -define icon:auto-resize=256,128,96,64,48,32,24,20,16 "${SRC_PREFIX}src/${QUALITY}/resources/win32/${name}.ico"
+        magick "${name}.png" -define icon:auto-resize=256,128,96,64,48,32,24,20,16 "${SRC_PREFIX}src/${QUALITY}/resources/win32/${name}.ico"
 
         rm "${name}_9_256x256x32.png" "${name}.png"
       fi
@@ -197,18 +210,39 @@ build_windows_types() { # {{{
 } # }}}
 
 if [[ "${0}" == "${BASH_SOURCE[0]}" ]]; then
-  build_darwin_main
-  build_linux_main
-  build_windows_main
+  echo "Executing main functions"
 
-  build_darwin_types
-  build_windows_types
+  if ! build_darwin_main; then
+    echo "Error occurred in build_darwin_main"
+    exit 1
+  fi
 
-  build_media
+  if ! build_linux_main; then
+    echo "Error occurred in build_linux_main"
+    exit 1
+  fi
+
+  if ! build_windows_main; then
+    echo "Error occurred in build_windows_main"
+    exit 1
+  fi
+
+  if ! build_darwin_types; then
+    echo "Error occurred in build_darwin_types"
+    exit 1
+  fi
+
+  if ! build_windows_types; then
+    echo "Error occurred in build_windows_types"
+    exit 1
+  fi
+
+  if ! build_media; then
+    echo "Error occurred in build_media"
+    exit 1
+  fi
+
+  echo "All functions completed successfully"
 fi
 
-# At the end of the script, add error handling:
-if ! build_darwin_main; then
-  echo "Error occurred in build_darwin_main. Exiting."
-  exit 1
-fi
+echo "Script finished"
