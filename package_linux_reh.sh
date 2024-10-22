@@ -23,7 +23,7 @@ if [[ "${VSCODE_ARCH}" == "ppc64le" ]]; then
   GLIBC_VERSION="2.28"
 elif [[ "${VSCODE_ARCH}" == "riscv64" ]]; then
   # Unofficial RISC-V nodejs builds doesn't provide v16.x
-  # Node 18 is buggy so use 20 here for now: https://github.com/VSCodium/vscodium/issues/2060
+  # Node 18 is buggy so use 20 here for now: https://github.com/BiblioNexus-Foundation/codex/issues/2060
   NODE_VERSION="20.16.0"
 fi
 
