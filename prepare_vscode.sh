@@ -150,7 +150,22 @@ if [[ "${VSCODE_QUALITY}" == "insider" ]]; then
   setpath "product" "applicationName" "codex-insiders"
   setpath "product" "dataFolderName" ".codex-insiders"
   setpath "product" "linuxIconName" "codex-insiders"
+  setpath "product" "nameShort" "Codex - Insiders"
+  setpath "product" "nameLong" "Codex - Insiders"
+  setpath "product" "applicationName" "codex-insiders"
+  setpath "product" "dataFolderName" ".codex-insiders"
+  setpath "product" "linuxIconName" "codex-insiders"
   setpath "product" "quality" "insider"
+  setpath "product" "urlProtocol" "codex-insiders"
+  setpath "product" "serverApplicationName" "codex-server-insiders"
+  setpath "product" "serverDataFolderName" ".codex-server-insiders"
+  setpath "product" "darwinBundleIdentifier" "com.codex.CodexInsiders"
+  setpath "product" "win32AppUserModelId" "Codex.CodexInsiders"
+  setpath "product" "win32DirName" "Codex Insiders"
+  setpath "product" "win32MutexName" "codexinsiders"
+  setpath "product" "win32NameVersion" "Codex Insiders"
+  setpath "product" "win32RegValueName" "CodexInsiders"
+  setpath "product" "win32ShellNameShort" "Codex Insiders"
   setpath "product" "urlProtocol" "codex-insiders"
   setpath "product" "serverApplicationName" "codex-server-insiders"
   setpath "product" "serverDataFolderName" ".codex-server-insiders"
@@ -170,13 +185,25 @@ if [[ "${VSCODE_QUALITY}" == "insider" ]]; then
   setpath "product" "tunnelApplicationName" "codex-tunnel-insiders"
   setpath "product" "win32TunnelServiceMutex" "codexinsiders-tunnelservice"
   setpath "product" "win32TunnelMutex" "codexinsiders-tunnel"
+  setpath "product" "tunnelApplicationName" "codex-tunnel-insiders"
+  setpath "product" "win32TunnelServiceMutex" "codexinsiders-tunnelservice"
+  setpath "product" "win32TunnelMutex" "codexinsiders-tunnel"
 else
   setpath "product" "nameShort" "Codex"
   setpath "product" "nameLong" "Codex"
   setpath "product" "applicationName" "codex"
-  setpath "product" "dataFolderName" ".codex"
   setpath "product" "linuxIconName" "codex"
   setpath "product" "quality" "stable"
+  setpath "product" "urlProtocol" "codex"
+  setpath "product" "serverApplicationName" "codex-server"
+  setpath "product" "serverDataFolderName" ".codex-server"
+  setpath "product" "darwinBundleIdentifier" "com.codex"
+  setpath "product" "win32AppUserModelId" "Codex.Codex"
+  setpath "product" "win32DirName" "Codex"
+  setpath "product" "win32MutexName" "codex"
+  setpath "product" "win32NameVersion" "Codex"
+  setpath "product" "win32RegValueName" "Codex"
+  setpath "product" "win32ShellNameShort" "Codex"
   setpath "product" "urlProtocol" "codex"
   setpath "product" "serverApplicationName" "codex-server"
   setpath "product" "serverDataFolderName" ".codex-server"
@@ -193,6 +220,9 @@ else
   setpath "product" "win32UserAppId" "{{0FD05EB4-651E-4E78-A062-515204B47A3A}"
   setpath "product" "win32x64UserAppId" "{{2E1F05D1-C245-4562-81EE-28188DB6FD17}"
   setpath "product" "win32arm64UserAppId" "{{57FD70A5-1B8D-4875-9F40-C5553F094828}"
+  setpath "product" "tunnelApplicationName" "codex-tunnel"
+  setpath "product" "win32TunnelServiceMutex" "codex-tunnelservice"
+  setpath "product" "win32TunnelMutex" "codex-tunnel"
   setpath "product" "tunnelApplicationName" "codex-tunnel"
   setpath "product" "win32TunnelServiceMutex" "codex-tunnelservice"
   setpath "product" "win32TunnelMutex" "codex-tunnel"
@@ -215,7 +245,11 @@ cp resources/server/manifest.json{,.bak}
 if [[ "${VSCODE_QUALITY}" == "insider" ]]; then
   setpath "resources/server/manifest" "name" "Codex - Insiders"
   setpath "resources/server/manifest" "short_name" "Codex - Insiders"
+  setpath "resources/server/manifest" "name" "Codex - Insiders"
+  setpath "resources/server/manifest" "short_name" "Codex - Insiders"
 else
+  setpath "resources/server/manifest" "name" "Codex"
+  setpath "resources/server/manifest" "short_name" "Codex"
   setpath "resources/server/manifest" "name" "Codex"
   setpath "resources/server/manifest" "short_name" "Codex"
 fi
@@ -229,15 +263,22 @@ replace 's|Microsoft Corporation|Codex|' build/lib/electron.js
 replace 's|Microsoft Corporation|Codex|' build/lib/electron.ts
 replace 's|([0-9]) Microsoft|\1 Codex|' build/lib/electron.js
 replace 's|([0-9]) Microsoft|\1 Codex|' build/lib/electron.ts
+replace 's|Microsoft Corporation|Codex|' build/lib/electron.js
+replace 's|Microsoft Corporation|Codex|' build/lib/electron.ts
+replace 's|([0-9]) Microsoft|\1 Codex|' build/lib/electron.js
+replace 's|([0-9]) Microsoft|\1 Codex|' build/lib/electron.ts
 
 if [[ "${OS_NAME}" == "linux" ]]; then
   # microsoft adds their apt repo to sources
   # unless the app name is code-oss
   # as we are renaming the application to codex
+  # as we are renaming the application to codex
   # we need to edit a line in the post install template
   if [[ "${VSCODE_QUALITY}" == "insider" ]]; then
     sed -i "s/code-oss/codex-insiders/" resources/linux/debian/postinst.template
+    sed -i "s/code-oss/codex-insiders/" resources/linux/debian/postinst.template
   else
+    sed -i "s/code-oss/codex/" resources/linux/debian/postinst.template
     sed -i "s/code-oss/codex/" resources/linux/debian/postinst.template
   fi
 
@@ -247,11 +288,19 @@ if [[ "${OS_NAME}" == "linux" ]]; then
   sed -i 's|https://code.visualstudio.com/docs/setup/linux|https://github.com/genesis-ai-dev/codex#download-install|' resources/linux/code.appdata.xml
   sed -i 's|https://code.visualstudio.com/home/home-screenshot-linux-lg.png|https://codex.com/img/codex.png|' resources/linux/code.appdata.xml
   sed -i 's|https://code.visualstudio.com|https://codex.com|' resources/linux/code.appdata.xml
+  sed -i 's|Visual Studio Code|Codex|g' resources/linux/code.appdata.xml
+  sed -i 's|https://code.visualstudio.com/docs/setup/linux|https://github.com/BiblioNexus-Foundation/codex#download-install|' resources/linux/code.appdata.xml
+  sed -i 's|https://code.visualstudio.com/home/home-screenshot-linux-lg.png|https://codex.com/img/codex.png|' resources/linux/code.appdata.xml
+  sed -i 's|https://code.visualstudio.com|https://codex.com|' resources/linux/code.appdata.xml
 
   # control.template
   sed -i 's|Microsoft Corporation <vscode-linux@microsoft.com>|Codex Team https://github.com/genesis-ai-dev/codex/graphs/contributors|' resources/linux/debian/control.template
   sed -i 's|Visual Studio Code|Codex|g' resources/linux/debian/control.template
   sed -i 's|https://code.visualstudio.com/docs/setup/linux|https://github.com/genesis-ai-dev/codex#download-install|' resources/linux/debian/control.template
+  sed -i 's|https://code.visualstudio.com|https://codex.com|' resources/linux/debian/control.template
+  sed -i 's|Microsoft Corporation <vscode-linux@microsoft.com>|Codex Team https://github.com/BiblioNexus-Foundation/codex/graphs/contributors|'  resources/linux/debian/control.template
+  sed -i 's|Visual Studio Code|Codex|g' resources/linux/debian/control.template
+  sed -i 's|https://code.visualstudio.com/docs/setup/linux|https://github.com/BiblioNexus-Foundation/codex#download-install|' resources/linux/debian/control.template
   sed -i 's|https://code.visualstudio.com|https://codex.com|' resources/linux/debian/control.template
 
   # code.spec.template
@@ -260,11 +309,18 @@ if [[ "${OS_NAME}" == "linux" ]]; then
   sed -i 's|Visual Studio Code|Codex|' resources/linux/rpm/code.spec.template
   sed -i 's|https://code.visualstudio.com/docs/setup/linux|https://github.com/genesis-ai-dev/codex#download-install|' resources/linux/rpm/code.spec.template
   sed -i 's|https://code.visualstudio.com|https://codex.com|' resources/linux/rpm/code.spec.template
+  sed -i 's|Microsoft Corporation|Codex Team|' resources/linux/rpm/code.spec.template
+  sed -i 's|Visual Studio Code Team <vscode-linux@microsoft.com>|Codex Team https://github.com/BiblioNexus-Foundation/codex/graphs/contributors|' resources/linux/rpm/code.spec.template
+  sed -i 's|Visual Studio Code|Codex|' resources/linux/rpm/code.spec.template
+  sed -i 's|https://code.visualstudio.com/docs/setup/linux|https://github.com/BiblioNexus-Foundation/codex#download-install|' resources/linux/rpm/code.spec.template
+  sed -i 's|https://code.visualstudio.com|https://codex.com|' resources/linux/rpm/code.spec.template
 
   # snapcraft.yaml
   sed -i 's|Visual Studio Code|Codex|' resources/linux/rpm/code.spec.template
 elif [[ "${OS_NAME}" == "windows" ]]; then
   # code.iss
+  sed -i 's|https://code.visualstudio.com|https://codex.com|' build/win32/code.iss
+  sed -i 's|Microsoft Corporation|Codex|' build/win32/code.iss
   sed -i 's|https://code.visualstudio.com|https://codex.com|' build/win32/code.iss
   sed -i 's|Microsoft Corporation|Codex|' build/win32/code.iss
 fi

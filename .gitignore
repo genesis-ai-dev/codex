@@ -3,6 +3,9 @@ VS*/*
 VSCode*
 Codex*
 .DS_Store
+**/*/.DS_Store
+vscode/
+.aider*
 *.env
 assets/
 build/linux/appimage/out

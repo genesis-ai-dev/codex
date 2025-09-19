@@ -6,6 +6,7 @@
 ###
 
 export APP_NAME="Codex"
+export ASSETS_REPOSITORY="BiblioNexus-Foundation/codex"
 export BINARY_NAME="codex"
 export CI_BUILD="no"
 export GH_REPO_PATH="genesis-ai-dev/codex"
@@ -21,6 +22,7 @@ export VSCODE_SKIP_NODE_VERSION_CHECK="yes"
 while getopts ":ilops" opt; do
   case "$opt" in
     i)
+      export ASSETS_REPOSITORY="BiblioNexus-Foundation/codex-insiders"
       export BINARY_NAME="codex-insiders"
       export VSCODE_QUALITY="insider"
       ;;
