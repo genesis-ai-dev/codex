@@ -1,6 +1,4 @@
-<!-- order: 35 -->
-
-# How to build VSCodium
+# How to build Codex
 
 ## Table of Contents
 
@@ -17,7 +15,7 @@
 
 ## <a id="dependencies"></a>Dependencies
 
-- node 20.18
+- node 20.18.2
 - jq
 - git
 - python3 3.11
@@ -71,14 +69,39 @@ You can try the latest version with the command `./dev/build.sh -il` but the pat
 The script `dev/build.sh` provides several flags:
 
 - `-i`: build the Insiders version
-- `-l`: build with latest version of Visual Studio Code
-- `-o`: skip the build step
+- `-l`: build with latest version of Visual Studio Code (⚠️ use carefully - may break patches)
+- `-o`: skip the build step (download source only)
 - `-p`: generate the packages/assets/installers
-- `-s`: do not retrieve the source code of Visual Studio Code, it won't delete the existing build
+- `-s`: do not retrieve the source code (skip source download, use existing vscode/ folder)
+
+### Testing Your Build
+
+After building, test your app:
+
+```bash
+# macOS
+open ./VSCode-darwin-arm64/Codex.app
+
+# Linux
+./VSCode-linux-x64/bin/codex
+
+# Windows
+./VSCode-win32-x64/Codex.exe
+```
+
+### Testing Update Detection
+
+```bash
+# Test if update URLs work
+./test-version-url.sh
+
+# Test update detection with built app
+./test-update-detection.sh
+```
 
 ## <a id="build-ci"></a>Build for CI/Downstream
 
-Here is the base script to build VSCodium:
+Here is the base script to build Codex:
 
 ```bash
 # Export necessary environment variables
@@ -95,9 +118,9 @@ export RELEASE_VERSION="${version}"
 ```
 
 To go further, you should look at how we build it:
-- Linux: https://github.com/VSCodium/vscodium/blob/master/.github/workflows/stable-linux.yml
-- macOS: https://github.com/VSCodium/vscodium/blob/master/.github/workflows/stable-macos.yml
-- Windows: https://github.com/VSCodium/vscodium/blob/master/.github/workflows/stable-windows.yml
+- Linux: https://github.com/BiblioNexus-Foundation/codex/blob/master/.github/workflows/stable-linux.yml
+- macOS: https://github.com/BiblioNexus-Foundation/codex/blob/master/.github/workflows/stable-macos.yml
+- Windows: https://github.com/BiblioNexus-Foundation/codex/blob/master/.github/workflows/stable-windows.yml
 
 The `./dev/build.sh` script is for development purpose and must be avoided for a packaging purpose.
 
@@ -114,7 +137,7 @@ cd ./stores/snapcraft/insider
 snapcraft --use-lxd
 
 # verify the snap
-review-tools.snap-review --allow-classic codium*.snap
+review-tools.snap-review --allow-classic codex*.snap
 ```
 
 ## <a id="patch-update-process"></a>Patch Update Process
@@ -123,7 +146,7 @@ review-tools.snap-review --allow-classic codium*.snap
 
 - run `./dev/build.sh`, if a patch is failing then,
 - run `./dev/update_patches.sh`
-- when the script pauses at `Press any key when the conflict have been resolved...`, open `vscode` directory in **VSCodium**
+- when the script pauses at `Press any key when the conflict have been resolved...`, open `vscode` directory in **Codex**
 - fix all the `*.rej` files
 - run `npm run watch`
 - run `./script/code.sh` until everything is ok
@@ -133,7 +156,7 @@ review-tools.snap-review --allow-classic codium*.snap
 
 - run `./dev/build.sh`, if a patch is failing then,
 - run `./dev/patch.sh <name>.patch` where `<name>.patch` is the failed patch
-- open `vscode` directory in a new **VSCodium**'s window
+- open `vscode` directory in a new **Codex**'s window
 - fix all the `*.rej` files
 - run `npm run watch`
 - run `./script/code.sh` until everything is ok

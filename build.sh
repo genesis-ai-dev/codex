@@ -22,6 +22,8 @@ if [[ "${SHOULD_BUILD}" == "yes" ]]; then
   npm run gulp compile-extensions-build
   npm run gulp minify-vscode
 
+  . ../get-extensions.sh
+
   if [[ "${OS_NAME}" == "osx" ]]; then
     # remove win32 node modules
     rm -f .build/extensions/ms-vscode.js-debug/src/win32-app-container-tokens.*.node

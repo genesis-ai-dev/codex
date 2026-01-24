@@ -47,7 +47,7 @@ jobs:
       SHOULD_DEPLOY: ${{ env.SHOULD_DEPLOY }}
 
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v4
         with:
           ref: ${{ env.GITHUB_BRANCH }}
 
@@ -62,9 +62,10 @@ jobs:
       - name: Check PR or cron
         env:
           GENERATE_ASSETS: ${{ github.event.inputs.generate_assets }}
+          GITHUB_EVENT_CLIENT_PAYLOAD: ${{ toJson(github.event.client_payload) }}
         run: ./check_cron_or_pr.sh
 
-      - name: Check existing VSCodium tags/releases
+      - name: Check existing Codex tags/releases
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           CHECK_ALL: 'yes'
@@ -84,7 +85,7 @@ jobs:
       BUILD_SOURCEVERSION: ${{ env.BUILD_SOURCEVERSION }}
 
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v4
         with:
           ref: ${{ env.GITHUB_BRANCH }}
         if: env.SHOULD_BUILD == 'yes'
@@ -96,20 +97,20 @@ jobs:
         if: env.SHOULD_BUILD == 'yes'
 
       - name: Setup GCC
-        uses: egor-tensin/setup-gcc@v2
+        uses: egor-tensin/setup-gcc@v1
         with:
           version: 10
           platform: x64
         if: env.SHOULD_BUILD == 'yes'
 
       - name: Setup Node.js environment
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@v4
         with:
-          node-version-file: '.nvmrc'
+          node-version: '20.19.0'
         if: env.SHOULD_BUILD == 'yes'
 
       - name: Setup Python 3
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@v5
         with:
           python-version: '3.11'
         if: env.SHOULD_BUILD == 'yes'
@@ -138,7 +139,7 @@ jobs:
         if: env.SHOULD_BUILD == 'yes'
 
       - name: Upload vscode artifact
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v4
         with:
           name: vscode
           path: ./vscode.tar.gz
@@ -166,18 +167,18 @@ jobs:
           vscode_arch: armhf
           npm_arch: arm
           image: vscodium/vscodium-linux-build-agent:focal-armhf
-        - slug: RISCV64
-          vscode_arch: riscv64
-          npm_arch: riscv64
-          image: vscodium/vscodium-linux-build-agent:focal-riscv64
-        - slug: LOONG64
-          vscode_arch: loong64
-          npm_arch: loong64
-          image: vscodium/vscodium-linux-build-agent:crimson-loong64
-        - slug: PPC64
-          vscode_arch: ppc64le
-          npm_arch: ppc64
-          image: vscodium/vscodium-linux-build-agent:focal-ppc64le
+        # - slug: RISCV64
+        #   vscode_arch: riscv64
+        #   npm_arch: riscv64
+        #   image: vscodium/vscodium-linux-build-agent:focal-riscv64
+        # - slug: LOONG64
+        #   vscode_arch: loong64
+        #   npm_arch: loong64
+        #   image: vscodium/vscodium-linux-build-agent:trixie-loong64
+        # - slug: PPC64
+        #   vscode_arch: ppc64le
+        #   npm_arch: ppc64
+        #   image: vscodium/vscodium-linux-build-agent:focal-ppc64le
     container:
       image: ${{ matrix.image }}
     env:
@@ -189,13 +190,14 @@ jobs:
       SHOULD_BUILD: ${{ (needs.check.outputs.SHOULD_BUILD == 'yes' || github.event.inputs.generate_assets == 'true') && 'yes' || 'no' }}
       SHOULD_DEPLOY: ${{ needs.check.outputs.SHOULD_DEPLOY }}
       VSCODE_ARCH: ${{ matrix.vscode_arch }}
+      ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION: true
     outputs:
       RELEASE_VERSION: ${{ env.RELEASE_VERSION }}
       SHOULD_BUILD: ${{ env.SHOULD_BUILD }}
       SHOULD_DEPLOY: ${{ env.SHOULD_DEPLOY }}
 
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v4
         with:
           ref: ${{ env.GITHUB_BRANCH }}
         if: env.DISABLED != 'yes' && env.SHOULD_BUILD == 'yes'
@@ -207,10 +209,10 @@ jobs:
         if: env.DISABLED != 'yes'
 
       - name: Install GH
-        run: ./build/linux/install_gh.sh
+        run: ./install_gh.sh
         if: env.DISABLED != 'yes' && env.SHOULD_BUILD == 'yes' && env.SHOULD_DEPLOY == 'yes'
 
-      - name: Check existing VSCodium tags/releases
+      - name: Check existing Codex tags/releases
         env:
           CHECK_REH: 'no'
           DISABLE_APPIMAGE: ${{ vars.DISABLE_STABLE_APPIMAGE }}
@@ -226,7 +228,7 @@ jobs:
         if: env.DISABLED != 'yes' && env.SHOULD_BUILD == 'yes'
 
       - name: Download vscode artifact
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@v4
         with:
           name: vscode
         if: env.DISABLED != 'yes' && env.SHOULD_BUILD == 'yes'
@@ -261,7 +263,7 @@ jobs:
         if: env.DISABLED != 'yes' && env.SHOULD_BUILD == 'yes' && env.SHOULD_DEPLOY == 'yes'
 
       - name: Upload assets
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v4
         with:
           name: bin-${{ matrix.vscode_arch }}
           path: assets/
@@ -286,18 +288,18 @@ jobs:
         - slug: ARM32
           vscode_arch: armhf
           npm_arch: arm
-        - slug: PPC64
-          vscode_arch: ppc64le
-          npm_arch: ppc64
-        - slug: RISCV64
-          vscode_arch: riscv64
-          npm_arch: riscv64
-        - slug: LOONG64
-          vscode_arch: loong64
-          npm_arch: loong64
-        - slug: S390X
-          vscode_arch: s390x
-          npm_arch: s390x
+        # - slug: PPC64
+        #   vscode_arch: ppc64le
+        #   npm_arch: ppc64
+        # - slug: RISCV64
+        #   vscode_arch: riscv64
+        #   npm_arch: riscv64
+        # - slug: LOONG64
+        #   vscode_arch: loong64
+        #   npm_arch: loong64
+        # - slug: S390X
+        #   vscode_arch: s390x
+        #   npm_arch: s390x
     env:
       BUILD_SOURCEVERSION: ${{ needs.compile.outputs.BUILD_SOURCEVERSION }}
       DISABLED: ${{ vars[format('DISABLE_STABLE_LINUX_REH_{0}', matrix.slug)] }}
@@ -310,7 +312,7 @@ jobs:
     if: needs.check.outputs.SHOULD_BUILD == 'yes' || github.event.inputs.generate_assets == 'true'
 
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v4
         with:
           ref: ${{ env.GITHUB_BRANCH }}
         if: env.DISABLED != 'yes'
@@ -322,20 +324,20 @@ jobs:
         if: env.DISABLED != 'yes'
 
       - name: Setup GCC
-        uses: egor-tensin/setup-gcc@v2
+        uses: egor-tensin/setup-gcc@v1
         with:
           version: 10
           platform: x64
         if: env.DISABLED != 'yes'
 
       - name: Setup Node.js environment
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@v4
         with:
-          node-version-file: '.nvmrc'
+          node-version: '20.19.0'
         if: env.DISABLED != 'yes'
 
       - name: Setup Python 3
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@v5
         with:
           python-version: '3.11'
         if: env.DISABLED != 'yes'
@@ -345,10 +347,10 @@ jobs:
         if: env.DISABLED != 'yes'
 
       - name: Install GH
-        run: ./build/linux/install_gh.sh
+        run: ./install_gh.sh
         if: env.DISABLED != 'yes' && env.SHOULD_DEPLOY == 'yes'
 
-      - name: Check existing VSCodium tags/releases
+      - name: Check existing Codex tags/releases
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           CHECK_ONLY_REH: 'yes'
@@ -356,7 +358,7 @@ jobs:
         if: env.DISABLED != 'yes'
 
       - name: Download vscode artifact
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@v4
         with:
           name: vscode
         if: env.DISABLED != 'yes' && (env.SHOULD_BUILD_REH != 'no' || env.SHOULD_BUILD_REH_WEB != 'no' || github.event.inputs.generate_assets == 'true')
@@ -376,7 +378,7 @@ jobs:
         if: env.DISABLED != 'yes' && env.SHOULD_DEPLOY == 'yes' && (env.SHOULD_BUILD_REH != 'no' || env.SHOULD_BUILD_REH_WEB != 'no')
 
       - name: Upload assets
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v4
         with:
           name: reh-linux-${{ matrix.vscode_arch }}
           path: assets/
@@ -411,7 +413,7 @@ jobs:
     if: needs.check.outputs.SHOULD_BUILD == 'yes' || github.event.inputs.generate_assets == 'true'
 
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v4
         with:
           ref: ${{ env.GITHUB_BRANCH }}
 
@@ -421,21 +423,16 @@ jobs:
         run: ./get_pr.sh
 
       - name: Setup GCC
-        uses: egor-tensin/setup-gcc@v2
+        uses: egor-tensin/setup-gcc@v1
         with:
           version: 10
           platform: x64
 
-      - name: Setup Node.js environment
-        uses: actions/setup-node@v6
-        with:
-          node-version-file: '.nvmrc'
-
       - name: Install GH
-        run: ./build/linux/install_gh.sh
+        run: ./install_gh.sh
         if: env.SHOULD_DEPLOY == 'yes'
 
-      - name: Check existing VSCodium tags/releases
+      - name: Check existing Codex tags/releases
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           CHECK_ONLY_REH: 'yes'
@@ -446,7 +443,7 @@ jobs:
         if: env.SHOULD_BUILD == 'yes'
 
       - name: Download vscode artifact
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@v4
         with:
           name: vscode
         if: env.DISABLED != 'yes' && (env.SHOULD_BUILD_REH != 'no' || env.SHOULD_BUILD_REH_WEB != 'no' || github.event.inputs.generate_assets == 'true')
@@ -466,128 +463,9 @@ jobs:
         if: env.DISABLED != 'yes' && env.SHOULD_DEPLOY == 'yes' && (env.SHOULD_BUILD_REH != 'no' || env.SHOULD_BUILD_REH_WEB != 'no')
 
       - name: Upload assets
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v4
         with:
           name: reh-alpine-${{ matrix.vscode_arch }}
           path: assets/
           retention-days: 3
         if: env.DISABLED != 'yes' && env.SHOULD_DEPLOY == 'no' && github.event.inputs.generate_assets == 'true'
-
-  aur:
-    needs:
-      - check
-      - build
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-        - package_name: vscodium
-          package_type: stable
-        # - package_name: vscodium-git
-        #   package_type: rolling
-    if: needs.check.outputs.SHOULD_DEPLOY == 'yes'
-
-    steps:
-      - name: Publish ${{ matrix.package_name }}
-        uses: zokugun/github-actions-aur-releaser@v1
-        with:
-          package_name: ${{ matrix.package_name }}
-          package_type: ${{ matrix.package_type }}
-          aur_private_key: ${{ secrets.AUR_PRIVATE_KEY }}
-          aur_username: ${{ secrets.AUR_USERNAME }}
-          aur_email: ${{ secrets.AUR_EMAIL }}
-
-  snap:
-    needs:
-      - check
-      - build
-    runs-on: ubuntu-latest
-    env:
-      RELEASE_VERSION: ${{ needs.check.outputs.RELEASE_VERSION }}
-      SNAP_NAME: codium
-    strategy:
-      fail-fast: false
-      matrix:
-        platform:
-        - amd64
-        - arm64
-    if: needs.check.outputs.SHOULD_DEPLOY == 'yes' && needs.check.outputs.SHOULD_BUILD_SNAP != 'no' && vars.DISABLE_STABLE_SNAP != 'yes'
-
-    steps:
-      - uses: actions/checkout@v6
-        with:
-          ref: ${{ env.GITHUB_BRANCH }}
-
-      - name: Switch to relevant branch
-        env:
-          PULL_REQUEST_ID: ${{ github.event.inputs.checkout_pr }}
-        run: ./get_pr.sh
-
-      - name: Check version
-        env:
-          ARCHITECTURE: ${{ matrix.platform }}
-          GENERATE_ASSETS: ${{ github.event.inputs.generate_assets }}
-          SNAPCRAFT_STORE_CHANNEL: ${{ vars.SNAP_STORE_CHANNEL }}
-          SNAPCRAFT_STORE_CREDENTIALS: ${{ secrets.SNAP_STORE_LOGIN }}
-        run: ./stores/snapcraft/check_version.sh
-
-      - uses: docker/setup-qemu-action@v3
-        if: env.SHOULD_BUILD == 'yes'
-
-      - uses: diddlesnaps/snapcraft-multiarch-action@v1
-        with:
-          path: stores/snapcraft/stable
-          architecture: ${{ matrix.platform }}
-        id: build
-        if: env.SHOULD_BUILD == 'yes'
-
-      - uses: diddlesnaps/snapcraft-review-action@v1
-        with:
-          snap: ${{ steps.build.outputs.snap }}
-          isClassic: 'true'
-        if: env.SHOULD_DEPLOY_TO_RELEASE == 'yes' || env.SHOULD_DEPLOY_TO_STORE == 'yes'
-
-      - uses: svenstaro/upload-release-action@v2
-        with:
-          repo_name: ${{ env.ASSETS_REPOSITORY }}
-          repo_token: ${{ secrets.STRONGER_GITHUB_TOKEN }}
-          file: ${{ steps.build.outputs.snap }}
-          tag: ${{ env.RELEASE_VERSION }}
-        if: env.SHOULD_DEPLOY_TO_RELEASE == 'yes'
-
-      - uses: snapcore/action-publish@master
-        env:
-          SNAPCRAFT_STORE_CREDENTIALS: ${{ secrets.SNAP_STORE_LOGIN }}
-        with:
-          snap: ${{ steps.build.outputs.snap }}
-          release: ${{ vars.SNAP_STORE_CHANNEL }}
-        if: env.SHOULD_DEPLOY_TO_STORE == 'yes'
-
-  deploy-repo-rudy:
-    needs:
-      - check
-      - build
-    runs-on: ubuntu-latest
-    if: needs.check.outputs.SHOULD_DEPLOY == 'yes' && github.event.inputs.generate_assets != 'true'
-
-    steps:
-      - name: Trigger repository rebuild
-        env:
-          GL_PAGES_TOKEN: ${{ secrets.GL_PAGES_TOKEN }}
-        run: curl -X POST --fail -F token="${GL_PAGES_TOKEN}" -F ref=master https://gitlab.com/api/v4/projects/8762263/trigger/pipeline
-
-  deploy-repo-dev:
-    needs:
-      - check
-      - build
-    runs-on: ubuntu-latest
-    if: needs.check.outputs.SHOULD_DEPLOY == 'yes' && github.event.inputs.generate_assets != 'true'
-
-    steps:
-      - name: Trigger repository rebuild
-        uses: peter-evans/repository-dispatch@v4
-        with:
-          token: ${{ secrets.STRONGER_GITHUB_TOKEN }}
-          repository: VSCodium/repositories-linux
-          event-type: deploy
