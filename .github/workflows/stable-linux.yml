@@ -209,7 +209,7 @@ jobs:
         if: env.DISABLED != 'yes'
 
       - name: Install GH
-        run: ./install_gh.sh
+        run: ./build/linux/install_gh.sh
         if: env.DISABLED != 'yes' && env.SHOULD_BUILD == 'yes' && env.SHOULD_DEPLOY == 'yes'
 
       - name: Check existing Codex tags/releases
@@ -347,7 +347,7 @@ jobs:
         if: env.DISABLED != 'yes'
 
       - name: Install GH
-        run: ./install_gh.sh
+        run: ./build/linux/install_gh.sh
         if: env.DISABLED != 'yes' && env.SHOULD_DEPLOY == 'yes'
 
       - name: Check existing Codex tags/releases
@@ -434,7 +434,7 @@ jobs:
           node-version-file: '.nvmrc'
 
       - name: Install GH
-        run: ./install_gh.sh
+        run: ./build/linux/install_gh.sh
         if: env.SHOULD_DEPLOY == 'yes'
 
       - name: Check existing Codex tags/releases
