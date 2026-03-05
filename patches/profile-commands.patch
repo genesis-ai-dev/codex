@@ -1,0 +1,92 @@
+diff --git a/src/vs/workbench/contrib/userDataProfile/browser/userDataProfile.ts b/src/vs/workbench/contrib/userDataProfile/browser/userDataProfile.ts
+index f8ea86c..59df4e4 100644
+--- a/src/vs/workbench/contrib/userDataProfile/browser/userDataProfile.ts
++++ b/src/vs/workbench/contrib/userDataProfile/browser/userDataProfile.ts
+@@ -11,3 +11,5 @@ import { Action2, MenuId, MenuRegistry, registerAction2 } from '../../../../plat
+ import { ContextKeyExpr, IContextKey, IContextKeyService } from '../../../../platform/contextkey/common/contextkey.js';
++import { CommandsRegistry } from '../../../../platform/commands/common/commands.js';
+ import { IUserDataProfile, IUserDataProfilesService } from '../../../../platform/userDataProfile/common/userDataProfile.js';
++import { IWorkbenchExtensionManagementService } from '../../../services/extensionManagement/common/extensionManagement.js';
+ import { IWorkbenchContribution } from '../../../common/contributions.js';
+@@ -88,2 +90,3 @@ export class UserDataProfilesWorkbenchContribution extends Disposable implements
+ 		this.reportWorkspaceProfileInfo();
++		this.registerCodexProfileCommands();
+ 
+@@ -163,2 +166,77 @@ export class UserDataProfilesWorkbenchContribution extends Disposable implements
+ 
++	/**
++	 * Register programmatic profile commands for use by Codex extensions.
++	 * These are not shown in the command palette — they are API-only.
++	 */
++	private registerCodexProfileCommands(): void {
++		// codex.profiles.create — Create a named profile, returns { id, name }
++		this._register(CommandsRegistry.registerCommand('codex.profiles.create', async (_accessor, name: string) => {
++			if (!name || typeof name !== 'string') {
++				throw new Error('Profile name is required');
++			}
++			const existing = this.userDataProfilesService.profiles.find(p => p.name === name);
++			if (existing) {
++				return { id: existing.id, name: existing.name };
++			}
++			const profile = await this.userDataProfilesService.createNamedProfile(name);
++			return { id: profile.id, name: profile.name };
++		}));
++
++		// codex.profiles.switch — Switch current window to a profile by name
++		this._register(CommandsRegistry.registerCommand('codex.profiles.switch', async (_accessor, name: string) => {
++			if (!name || typeof name !== 'string') {
++				throw new Error('Profile name is required');
++			}
++			const profile = this.userDataProfilesService.profiles.find(p => p.name === name);
++			if (!profile) {
++				throw new Error(`Profile '${name}' not found`);
++			}
++			await this.userDataProfileManagementService.switchProfile(profile);
++			return { id: profile.id, name: profile.name };
++		}));
++
++		// codex.profiles.delete — Delete a profile by name
++		this._register(CommandsRegistry.registerCommand('codex.profiles.delete', async (_accessor, name: string) => {
++			if (!name || typeof name !== 'string') {
++				throw new Error('Profile name is required');
++			}
++			const profile = this.userDataProfilesService.profiles.find(p => p.name === name);
++			if (!profile) {
++				throw new Error(`Profile '${name}' not found`);
++			}
++			if (profile.isDefault) {
++				throw new Error('Cannot delete the default profile');
++			}
++			await this.userDataProfileManagementService.removeProfile(profile);
++		}));
++
++		// codex.profiles.current — Get the current profile name
++		this._register(CommandsRegistry.registerCommand('codex.profiles.current', async () => {
++			const profile = this.userDataProfileService.currentProfile;
++			return { id: profile.id, name: profile.name, isDefault: profile.isDefault };
++		}));
++
++		// codex.extensions.installToProfile — Install a VSIX into a specific profile by name
++		this._register(CommandsRegistry.registerCommand('codex.extensions.installToProfile', async (accessor, vsixPath: string, profileName: string) => {
++			if (!vsixPath || typeof vsixPath !== 'string') {
++				throw new Error('VSIX path is required');
++			}
++			if (!profileName || typeof profileName !== 'string') {
++				throw new Error('Profile name is required');
++			}
++			const profile = this.userDataProfilesService.profiles.find(p => p.name === profileName);
++			if (!profile) {
++				throw new Error(`Profile '${profileName}' not found`);
++			}
++			// Resolve service synchronously — accessor is only valid during initial invocation
++			const extensionManagementService = accessor.get(IWorkbenchExtensionManagementService);
++			const vsixUri = URI.file(vsixPath);
++			const manifest = await extensionManagementService.getManifest(vsixUri);
++			await extensionManagementService.installVSIX(vsixUri, manifest, {
++				installGivenVersion: true,
++				profileLocation: profile.extensionsResource,
++			});
++		}));
++	}
++
+ 	private registerProfileSubMenu(): void {
