@@ -1,0 +1,31 @@
+{
+    "name": "conductor-bridge",
+    "displayName": "Codex Conductor Bridge",
+    "description": "Extension-host bridge for the Codex Conductor. Downloads LFS-tracked VSIXs via Frontier.",
+    "version": "0.1.0",
+    "publisher": "project-accelerate",
+    "repository": {
+        "type": "git",
+        "url": "https://github.com/genesis-ai-dev/codex"
+    },
+    "engines": {
+        "vscode": "^1.78.0"
+    },
+    "categories": [
+        "Other"
+    ],
+    "activationEvents": [
+        "*"
+    ],
+    "main": "./out/extension.js",
+    "scripts": {
+        "vscode:prepublish": "npm run compile",
+        "compile": "tsc -p ./",
+        "watch": "tsc -watch -p ./"
+    },
+    "devDependencies": {
+        "@types/node": "^18.0.0",
+        "@types/vscode": "^1.78.0",
+        "typescript": "^5.3.0"
+    }
+}
