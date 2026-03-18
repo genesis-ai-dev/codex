@@ -9,6 +9,8 @@ else
   cp -rp src/stable/* vscode/
 fi
 
+cp -rp extensions/conductor-bridge vscode/extensions/
+
 cp -f LICENSE vscode/LICENSE.txt
 
 cd vscode || { echo "'vscode' dir not found"; exit 1; }
