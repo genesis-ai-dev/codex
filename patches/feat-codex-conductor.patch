@@ -1,17 +1,9 @@
-diff --git a/build/npm/dirs.ts b/build/npm/dirs.ts
-index 48d76e2..8fa8d55 100644
---- a/build/npm/dirs.ts
-+++ b/build/npm/dirs.ts
-@@ -15,2 +15,3 @@ export const dirs = [
- 	'extensions',
-+	'extensions/conductor-bridge',
- 	'extensions/configuration-editing',
 diff --git a/src/vs/workbench/workbench.common.main.ts b/src/vs/workbench/workbench.common.main.ts
 index e7c16a7..5ede7d5 100644
 --- a/src/vs/workbench/workbench.common.main.ts
 +++ b/src/vs/workbench/workbench.common.main.ts
 @@ -325,2 +325,5 @@ import './contrib/keybindings/browser/keybindings.contribution.js';
- 
+
 +// Codex
 +import './contrib/codexConductor/browser/codexConductor.contribution.js';
 +

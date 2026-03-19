@@ -21,9 +21,15 @@ import { IDialogService } from '../../../../platform/dialogs/common/dialogs.js';
 import { IClipboardService } from '../../../../platform/clipboard/common/clipboardService.js';
 import { IProductService } from '../../../../platform/product/common/productService.js';
 import { OS, OperatingSystem } from '../../../../base/common/platform.js';
+import { IRequestService } from '../../../../platform/request/common/request.js';
+import { CancellationToken } from '../../../../base/common/cancellation.js';
+import { IEnvironmentService } from '../../../../platform/environment/common/environment.js';
+import { generateUuid } from '../../../../base/common/uuid.js';
+import { streamToBuffer } from '../../../../base/common/buffer.js';
 
 interface PinnedExtensionEntry {
 	version: string;
+	url?: string;
 	reason: string;
 	expiry?: string;
 	setBy?: string;
@@ -39,7 +45,6 @@ const CIRCUIT_BREAKER_MAX = 3;
 const CIRCUIT_BREAKER_WINDOW_MS = 30_000;
 const CONDUCTOR_PROFILE_PATTERN = /^.+-v\d+\.\d+\.\d+(\+[0-9a-f]{4})?$/;
 const FRONTIER_EXTENSION_ID = 'frontier-rnd.frontier-authentication';
-const CONDUCTOR_BRIDGE_EXTENSION_ID = 'project-accelerate.conductor-bridge';
 const PROFILE_ASSOCIATIONS_KEY = 'codex.conductor.profileAssociations';
 const LAST_CLEANUP_KEY = 'codex.conductor.lastCleanup';
 const CLEANUP_INTERVAL_MS = 14 * 24 * 60 * 60 * 1000; // 14 days
@@ -70,7 +75,9 @@ export class CodexConductorContribution extends Disposable implements IWorkbench
 		@ILogService private readonly logService: ILogService,
 		@IDialogService private readonly dialogService: IDialogService,
 		@IClipboardService private readonly clipboardService: IClipboardService,
-		@IProductService private readonly productService: IProductService
+		@IProductService private readonly productService: IProductService,
+		@IRequestService private readonly requestService: IRequestService,
+		@IEnvironmentService private readonly environmentService: IEnvironmentService
 	) {
 		super();
 
@@ -98,9 +105,6 @@ export class CodexConductorContribution extends Disposable implements IWorkbench
 
 		// Listen for sync completions from Frontier
 		this.listenForSyncCompletion();
-
-		// Listen for VSIX download completions from conductor-bridge
-		this.listenForVsixReady();
 	}
 
 	// ── Mid-session signals ────────────────────────────────────────────
@@ -120,24 +124,6 @@ export class CodexConductorContribution extends Disposable implements IWorkbench
 			storageListener
 		)(() => {
 			this.checkForPinChanges();
-		}));
-	}
-
-	/**
-	 * Listens for the conductor-bridge extension signaling that an LFS-tracked
-	 * VSIX has been downloaded. When this fires, re-run enforcement — the VSIX
-	 * that was previously a pointer should now be a real file.
-	 */
-	private listenForVsixReady(): void {
-		const storageListener = this._register(new DisposableStore());
-
-		this._register(this.storageService.onDidChangeValue(
-			StorageScope.WORKSPACE,
-			CONDUCTOR_BRIDGE_EXTENSION_ID,
-			storageListener
-		)(() => {
-			this.logService.info('[CodexConductor] Conductor-bridge signaled VSIX ready — re-running enforcement');
-			this.enforce();
 		}));
 	}
 
@@ -266,19 +252,29 @@ export class CodexConductorContribution extends Disposable implements IWorkbench
 		}
 
 		for (const [id, pin] of Object.entries(pins)) {
-			const vsixPath = joinPath(workspaceUri, '.project', 'extensions', `${id}-${pin.version}.vsix`);
+			if (!pin.url) {
+				this.logService.warn(`[CodexConductor] Pin for "${id}" has no url — skipping`);
+				continue;
+			}
+
+			let tempUri: URI | undefined;
 			try {
-				const stat = await this.fileService.stat(vsixPath);
-				if (stat.size < 1024) {
-					// LFS pointer detected — the conductor-bridge extension will
-					// download the real VSIX via Frontier and signal readiness by
-					// writing to workspace storage. Wait for next window open or
-					// reload to retry.
-					this.logService.info(`[CodexConductor] VSIX for "${id}" v${pin.version} is an LFS pointer — waiting for conductor-bridge to download`);
-					return;
+				// Download VSIX from URL
+				this.logService.info(`[CodexConductor] Downloading VSIX for "${id}" v${pin.version} from ${pin.url}`);
+				const response = await this.requestService.request({ url: pin.url, type: 'GET' }, CancellationToken.None);
+
+				if (response.res.statusCode && (response.res.statusCode < 200 || response.res.statusCode >= 300)) {
+					throw new Error(`HTTP ${response.res.statusCode} downloading ${pin.url}`);
 				}
 
-				await this.extensionManagementService.installVSIX(vsixPath, await this.extensionManagementService.getManifest(vsixPath), {
+				// Write response to temp file
+				const tempDir = this.environmentService.tmpDir;
+				tempUri = joinPath(tempDir, `conductor-${generateUuid()}.vsix`);
+				const buffer = await streamToBuffer(response.stream);
+				await this.fileService.writeFile(tempUri, buffer);
+
+				// Install from temp file
+				await this.extensionManagementService.installVSIX(tempUri, await this.extensionManagementService.getManifest(tempUri), {
 					installGivenVersion: true,
 					profileLocation: profile.extensionsResource
 				});
@@ -286,6 +282,11 @@ export class CodexConductorContribution extends Disposable implements IWorkbench
 				const message = e instanceof Error ? e.message : String(e);
 				this.notificationService.error(`Failed to install pinned extension ${id}: ${message}`);
 				return;
+			} finally {
+				// Clean up temp file
+				if (tempUri) {
+					this.fileService.del(tempUri).catch(() => { /* best-effort cleanup */ });
+				}
 			}
 		}
 
