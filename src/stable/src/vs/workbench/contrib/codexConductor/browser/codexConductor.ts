@@ -29,10 +29,7 @@ import { streamToBuffer } from '../../../../base/common/buffer.js';
 
 interface PinnedExtensionEntry {
 	version: string;
-	url?: string;
-	reason: string;
-	expiry?: string;
-	setBy?: string;
+	url: string;
 }
 
 type PinnedExtensions = Record<string, PinnedExtensionEntry>;
@@ -184,23 +181,14 @@ export class CodexConductorContribution extends Disposable implements IWorkbench
 
 			const pins: PinnedExtensions = (metadata as { meta?: { pinnedExtensions?: PinnedExtensions } })?.meta?.pinnedExtensions || {};
 
-			const effectivePins: PinnedExtensions = {};
-			for (const [id, pin] of Object.entries(pins)) {
-				if (pin.expiry && new Date(pin.expiry) < new Date()) {
-					this.logService.info(`[CodexConductor] Pin expired for "${id}" (set by ${pin.setBy || 'unknown'}) — using latest release`);
-					continue;
-				}
-				effectivePins[id] = pin;
-			}
-
-			if (Object.keys(effectivePins).length === 0) {
+			if (Object.keys(pins).length === 0) {
 				// No active pins — remove this project from any profile associations
 				this.removeCurrentProjectFromAssociations();
 				await this.revertIfPatchBuild();
 				return;
 			}
 
-			await this.enforcePins(effectivePins, workspaceFolder.uri);
+			await this.enforcePins(pins, workspaceFolder.uri);
 
 		} catch (e) {
 			// No metadata.json — not a Codex project, nothing to enforce
@@ -252,11 +240,6 @@ export class CodexConductorContribution extends Disposable implements IWorkbench
 		}
 
 		for (const [id, pin] of Object.entries(pins)) {
-			if (!pin.url) {
-				this.logService.warn(`[CodexConductor] Pin for "${id}" has no url — skipping`);
-				continue;
-			}
-
 			let tempUri: URI | undefined;
 			try {
 				// Download VSIX from URL
@@ -387,14 +370,7 @@ export class CodexConductorContribution extends Disposable implements IWorkbench
 				const metadata = JSON.parse(content.value.toString());
 				const pins: PinnedExtensions = metadata?.meta?.pinnedExtensions || {};
 
-				const effectivePins: PinnedExtensions = {};
-				for (const [id, pin] of Object.entries(pins)) {
-					if (!pin.expiry || new Date(pin.expiry) >= new Date()) {
-						effectivePins[id] = pin;
-					}
-				}
-
-				if (Object.keys(effectivePins).length > 0 && this.resolveProfileName(effectivePins) === profileName) {
+				if (Object.keys(pins).length > 0 && this.resolveProfileName(pins) === profileName) {
 					return true;
 				}
 			} catch {
@@ -474,7 +450,7 @@ export class CodexConductorContribution extends Disposable implements IWorkbench
 			'',
 			'Pinned Extensions:',
 			...Object.entries(pins).map(([id, pin]) =>
-				`  - ${id}: v${pin.version} (${pin.reason})${pin.setBy ? ` [set by ${pin.setBy}]` : ''}`
+				`  - ${id}: v${pin.version} (${pin.url})`
 			),
 			'',
 			'---',
