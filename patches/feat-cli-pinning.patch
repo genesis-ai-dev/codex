@@ -1,0 +1,230 @@
+diff --git a/cli/src/bin/code/main.rs b/cli/src/bin/code/main.rs
+index b73d0aa..d60d6be 100644
+--- a/cli/src/bin/code/main.rs
++++ b/cli/src/bin/code/main.rs
+@@ -10,3 +10,3 @@ use clap::Parser;
+ use cli::{
+-	commands::{args, serve_web, tunnels, update, version, CommandContext},
++	commands::{args, pin, serve_web, tunnels, update, version, CommandContext},
+ 	constants::get_default_user_agent,
+@@ -67,2 +67,3 @@ async fn main() -> Result<(), std::convert::Infallible> {
+ 			args::StandaloneCommands::Update(args) => update::update(context!(), args).await,
++			args::StandaloneCommands::Pin(args) => pin::pin(context!(), args).await,
+ 		},
+diff --git a/cli/src/commands.rs b/cli/src/commands.rs
+index 0277169..d4dfe66 100644
+--- a/cli/src/commands.rs
++++ b/cli/src/commands.rs
+@@ -8,2 +8,3 @@ mod context;
+ pub mod args;
++pub mod pin;
+ pub mod serve_web;
+diff --git a/cli/src/commands/args.rs b/cli/src/commands/args.rs
+index 6301bdd..692e06b 100644
+--- a/cli/src/commands/args.rs
++++ b/cli/src/commands/args.rs
+@@ -154,2 +154,35 @@ pub enum StandaloneCommands {
+ 	Update(StandaloneUpdateArgs),
++	/// Manage extension version pins for Codex projects.
++	Pin(PinArgs),
++}
++
++#[derive(Args, Debug, Clone)]
++pub struct PinArgs {
++	/// The project name or ID. If not provided, lists all projects.
++	pub project: Option<String>,
++
++	#[clap(subcommand)]
++	pub subcommand: Option<PinSubcommand>,
++}
++
++#[derive(Subcommand, Debug, Clone)]
++pub enum PinSubcommand {
++	/// List pins for the project (default).
++	List,
++	/// Pin an extension to a specific version via VSIX URL.
++	Add(PinAddArgs),
++	/// Remove a version pin.
++	Remove(PinRemoveArgs),
++}
++
++#[derive(Args, Debug, Clone)]
++pub struct PinAddArgs {
++	/// URL to the VSIX artifact (typically a GitHub Release asset).
++	pub url: String,
++}
++
++#[derive(Args, Debug, Clone)]
++pub struct PinRemoveArgs {
++	/// The extension identifier to unpin (e.g. 'publisher.name').
++	pub id: String,
+ }
+diff --git a/cli/src/util/errors.rs b/cli/src/util/errors.rs
+index b7ed029..6ed4439 100644
+--- a/cli/src/util/errors.rs
++++ b/cli/src/util/errors.rs
+@@ -437,2 +437,11 @@ impl Display for DbusConnectFailedError {
+ 
++#[derive(Debug)]
++pub struct PinningError(pub String);
++
++impl std::fmt::Display for PinningError {
++	fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
++		write!(f, "extension version pinning error: {}", self.0)
++	}
++}
++
+ /// Internal errors in the VS Code CLI.
+@@ -550,2 +559,3 @@ makeAnyError!(
+ 	InvalidRpcDataError,
++	PinningError,
+ 	CodeError,
+diff --git a/src/vs/platform/environment/common/argv.ts b/src/vs/platform/environment/common/argv.ts
+index a10f4c9..c75e211 100644
+--- a/src/vs/platform/environment/common/argv.ts
++++ b/src/vs/platform/environment/common/argv.ts
+@@ -26,2 +26,5 @@ export interface NativeParsedArgs {
+ 	'serve-web'?: INativeCliOptions;
++	pin?: {
++		_: string[];
++	};
+ 	chat?: {
+diff --git a/src/vs/platform/environment/node/argv.ts b/src/vs/platform/environment/node/argv.ts
+index 35a833d..590ef12 100644
+--- a/src/vs/platform/environment/node/argv.ts
++++ b/src/vs/platform/environment/node/argv.ts
+@@ -47,3 +47,3 @@ export type OptionDescriptions<T> = {
+ 
+-export const NATIVE_CLI_COMMANDS = ['tunnel', 'serve-web'] as const;
++export const NATIVE_CLI_COMMANDS = ['tunnel', 'serve-web', 'pin'] as const;
+ 
+@@ -94,2 +94,9 @@ export const OPTIONS: OptionDescriptions<Required<NativeParsedArgs>> = {
+ 	},
++	'pin': {
++		type: 'subcommand',
++		description: localize('pinExtension', "Manage extension version pins for Codex projects."),
++		options: {
++			_: { type: 'string[]' }
++		}
++	},
+ 	'diff': { type: 'boolean', cat: 'o', alias: 'd', args: ['file', 'file'], description: localize('diff', "Compare two files with each other.") },
+diff --git a/src/vs/platform/native/electron-main/nativeHostMainService.ts b/src/vs/platform/native/electron-main/nativeHostMainService.ts
+index 8041f08..3c3d891 100644
+--- a/src/vs/platform/native/electron-main/nativeHostMainService.ts
++++ b/src/vs/platform/native/electron-main/nativeHostMainService.ts
+@@ -423,23 +423,34 @@ export class NativeHostMainService extends Disposable implements INativeHostMain
+ 	async installShellCommand(windowId: number | undefined): Promise<void> {
+-		const { source, target } = await this.getShellCommandLink();
+-
+-		// Only install unless already existing
+-		try {
+-			const { symbolicLink } = await SymlinkSupport.stat(source);
+-			if (symbolicLink && !symbolicLink.dangling) {
+-				const linkTargetRealPath = await Promises.realpath(source);
+-				if (target === linkTargetRealPath) {
+-					return;
++		const links = await this.getShellCommandLinks();
++
++		// Only install unless all already existing
++		let allExist = true;
++		for (const link of links) {
++			try {
++				const { symbolicLink } = await SymlinkSupport.stat(link.source);
++				if (symbolicLink && !symbolicLink.dangling) {
++					const linkTargetRealPath = await Promises.realpath(link.source);
++					if (link.target === linkTargetRealPath) {
++						continue;
++					}
+ 				}
++				allExist = false;
++				break;
++			} catch (error) {
++				if (error.code !== 'ENOENT') {
++					throw error;
++				}
++				allExist = false;
++				break;
+ 			}
+-		} catch (error) {
+-			if (error.code !== 'ENOENT') {
+-				throw error; // throw on any error but file not found
+-			}
+ 		}
+ 
+-		await this.installShellCommandWithPrivileges(windowId, source, target);
++		if (allExist) {
++			return;
++		}
++
++		await this.installShellCommandWithPrivileges(windowId, links);
+ 	}
+ 
+-	private async installShellCommandWithPrivileges(windowId: number | undefined, source: string, target: string): Promise<void> {
++	private async installShellCommandWithPrivileges(windowId: number | undefined, links: { source: string; target: string }[]): Promise<void> {
+ 		const { response } = await this.showMessageBox(windowId, {
+@@ -458,6 +469,7 @@ export class NativeHostMainService extends Disposable implements INativeHostMain
+ 		try {
+-			const command = `osascript -e "do shell script \\"mkdir -p /usr/local/bin && ln -sf \'${target}\' \'${source}\'\\" with administrator privileges"`;
++			const commands = links.map(link => `ln -sf '${link.target}' '${link.source}'`).join(' && ');
++			const command = `osascript -e "do shell script \\"mkdir -p /usr/local/bin && ${commands}\\" with administrator privileges"`;
+ 			await promisify(exec)(command);
+ 		} catch (error) {
+-			throw new Error(localize('cantCreateBinFolder', "Unable to install the shell command '{0}'.", source));
++			throw new Error(localize('cantCreateBinFolder', "Unable to install the shell command."));
+ 		}
+@@ -466,6 +478,8 @@ export class NativeHostMainService extends Disposable implements INativeHostMain
+ 	async uninstallShellCommand(windowId: number | undefined): Promise<void> {
+-		const { source } = await this.getShellCommandLink();
++		const links = await this.getShellCommandLinks();
+ 
+ 		try {
+-			await fs.promises.unlink(source);
++			for (const link of links) {
++				await fs.promises.unlink(link.source);
++			}
+ 		} catch (error) {
+@@ -487,6 +501,7 @@ export class NativeHostMainService extends Disposable implements INativeHostMain
+ 					try {
+-						const command = `osascript -e "do shell script \\"rm \'${source}\'\\" with administrator privileges"`;
++						const commands = links.map(link => `rm -f '${link.source}'`).join(' && ');
++						const command = `osascript -e "do shell script \\"${commands}\\" with administrator privileges"`;
+ 						await promisify(exec)(command);
+ 					} catch (error) {
+-						throw new Error(localize('cantUninstall', "Unable to uninstall the shell command '{0}'.", source));
++						throw new Error(localize('uninstallFailed', "Unable to uninstall the shell command."));
+ 					}
+@@ -502,13 +517,26 @@ export class NativeHostMainService extends Disposable implements INativeHostMain
+ 
+-	private async getShellCommandLink(): Promise<{ readonly source: string; readonly target: string }> {
+-		const target = resolve(this.environmentMainService.appRoot, 'bin', this.productService.applicationName);
+-		const source = `/usr/local/bin/${this.productService.applicationName}`;
++	private async getShellCommandLinks(): Promise<{ readonly source: string; readonly target: string }[]> {
++		const links: { source: string; target: string }[] = [];
++
++		// Main 'codex' command
++		const mainTarget = resolve(this.environmentMainService.appRoot, 'bin', this.productService.applicationName);
++		const mainSource = `/usr/local/bin/${this.productService.applicationName}`;
++		if (await Promises.exists(mainTarget)) {
++			links.push({ source: mainSource, target: mainTarget });
++		}
++
++		// 'codex-cli' command pointing to 'codex-tunnel'
++		if (this.productService.tunnelApplicationName) {
++			const tunnelTarget = resolve(this.environmentMainService.appRoot, 'bin', this.productService.tunnelApplicationName);
++			const tunnelSource = '/usr/local/bin/codex-cli';
++			if (await Promises.exists(tunnelTarget)) {
++				links.push({ source: tunnelSource, target: tunnelTarget });
++			}
++		}
+ 
+-		// Ensure source exists
+-		const sourceExists = await Promises.exists(target);
+-		if (!sourceExists) {
+-			throw new Error(localize('sourceMissing', "Unable to find shell script in '{0}'", target));
++		if (links.length === 0) {
++			throw new Error(localize('sourceMissing', "Unable to find shell scripts in '{0}'", resolve(this.environmentMainService.appRoot, 'bin')));
+ 		}
+ 
+-		return { source, target };
++		return links;
+ 	}
