@@ -1,6 +1,6 @@
 # Codex Development Guide
 
-This repository builds Codex, a freely-licensed VS Code distribution. It is a fork of [VSCodium](https://github.com/VSCodium/vscodium) with custom branding and configuration. The build process clones Microsoft's vscode repository and modifies it via git patches.
+This repository builds **Codex**, a freely-licensed VS Code distribution for scripture translation. It is a fork of [VSCodium](https://github.com/VSCodium/vscodium) with custom branding, patches, and bundled extensions. The build clones Microsoft's VS Code, applies patches and source overlays, bundles extensions, and compiles platform-specific binaries.
 
 ## Upstream Relationship
 
@@ -19,316 +19,214 @@ This repo (Codex) ──patches──→ Codex binaries
 ## Repository Structure
 
 ```
-patches/           # All patch files that modify vscode source
-  *.patch          # Core patches applied to all builds
-  insider/         # Patches specific to insider builds
-  osx/             # macOS-specific patches
-  linux/           # Linux-specific patches
-  windows/         # Windows-specific patches
-  user/            # Optional user patches
-
-vscode/            # Cloned vscode repository (gitignored, generated)
-dev/               # Development helper scripts
-src/               # Brand assets and configuration overlays
+patches/              # Patch files applied to vscode source (alphabetical order)
+  *.patch             # Core patches applied to all builds
+  insider/            # Insider-only patches
+  osx/ linux/ windows/# Platform-specific patches
+  user/               # Optional user patches (hide-activity-bar, microphone, etc.)
+src/stable/           # Source overlay — copied into vscode/ before patches
+  cli/src/commands/   # Rust CLI additions (e.g. pin.rs)
+  src/vs/workbench/contrib/  # Workbench contributions (e.g. codexConductor/)
+  resources/          # Branding assets (icons, desktop files)
+extensions/           # Built-in extensions compiled with the VS Code build
+bundle-extensions.json# Extensions downloaded from GitHub Releases during build
+dev/                  # Development helper scripts
+vscode/               # Cloned vscode repo (gitignored, generated during build)
 ```
+
+## Building
+
+### Local Development Build
+
+```bash
+./dev/build.sh
+```
+
+This runs the full pipeline: clone vscode → copy source overlays → apply patches → `npm ci` → compile → bundle extensions → produce platform binary.
+
+**Flags:**
+- `-s` — Skip source clone (reuse existing `vscode/`). Patches and overlays are still re-applied.
+- `-o` — Prep source only, skip compilation.
+- `-l` — Use latest VS Code version from Microsoft's update API.
+- `-i` — Build insider variant.
+- `-p` — Include asset packaging (installers).
+
+Flags combine: `./dev/build.sh -sl` skips clone and uses latest.
+
+### Build Pipeline
+
+```
+dev/build.sh
+  ├─ get_repo.sh               # Clone vscode at commit from upstream/stable.json
+  ├─ version.sh                # Compute release version (e.g. 1.108.12007)
+  ├─ prepare_vscode.sh         # Copy src/stable/* overlay, merge product.json,
+  │                            # apply patches/*.patch, run npm ci
+  ├─ build.sh                  # gulp compile, webpack extensions, minify,
+  │  ├─ get-extensions.sh      # Download VSIXs from bundle-extensions.json
+  │  └─ gulp vscode-{platform}-{arch}-min-ci
+  └─ prepare_assets.sh         # Create installers (only with -p flag)
+```
+
+### What Gets Modified vs What's New
+
+There are two ways to add Codex-specific code to the VS Code source:
+
+- **Source overlays** (`src/stable/`): For **new files**. Copied verbatim into `vscode/` before patches run. Use for new workbench contributions, new Rust CLI modules, new resources.
+- **Patches** (`patches/`): For **modifying existing VS Code files**. Small, surgical diffs. Use for adding imports, registering contributions, changing config values.
+
+### Extension Bundling
+
+Extensions reach the final build three ways:
+
+| Method | Config | When |
+|--------|--------|------|
+| **Built-in** (compiled from source) | `vscode/extensions/` | Compiled by gulp during build |
+| **Downloaded** (pre-built VSIX) | `bundle-extensions.json` | Downloaded from GitHub Releases by `get-extensions.sh` |
+| **Sideloaded** (runtime install) | Extension sideloader config | Installed from OpenVSX on first launch |
+
+### Output
+
+| Platform | Output |
+|----------|--------|
+| macOS | `VSCode-darwin-{arch}/Codex.app` |
+| Linux | `VSCode-linux-{arch}/` |
+| Windows | `VSCode-win32-{arch}/` |
+
+On macOS: `open VSCode-darwin-arm64/Codex.app`
 
 ## Working with Patches
 
-### Understanding the Patch Workflow
+### Key Rules
 
-1. **Patches are the source of truth** - Never commit direct changes to the `vscode/` directory. All modifications to VS Code source must be captured as `.patch` files in the `patches/` directory.
+1. **Never edit patch files by hand.** Always generate them with `git diff --staged` inside `vscode/`. Hand-written patches fail with "corrupt patch" errors.
+2. **Patches are applied alphabetically.** A patch can depend on patches that sort before it (e.g. `feat-cli-pinning.patch` depends on `binary-name.patch`).
+3. **Patches use placeholder variables** (`!!APP_NAME!!`, `!!BINARY_NAME!!`, `!!GH_REPO_PATH!!`, etc.) that are substituted during application.
+4. **New files go in the source overlay**, not in patches. Only use patches to modify existing VS Code files.
 
-2. **Patches are applied sequentially** - Order matters. Core patches are applied first, then platform-specific patches.
+### Creating or Updating a Patch
 
-3. **Patches use placeholder variables** - Patches can use placeholders like `!!APP_NAME!!`, `!!BINARY_NAME!!`, etc. that get replaced during application.
-
-### Making Changes to VS Code Source
-
-#### Step 1: Set Up Working Environment
+Use `dev/patch.sh` to ensure the correct baseline:
 
 ```bash
-# Fresh clone of vscode at the correct commit
-./get_repo.sh
+# Edit feat-cli-pinning.patch, which depends on binary-name.patch:
+./dev/patch.sh binary-name feat-cli-pinning
 
-# Or use dev/build.sh which does this automatically
-./dev/build.sh
+# The script:
+# 1. Resets vscode/ to pristine upstream
+# 2. Applies binary-name.patch as the baseline
+# 3. Applies feat-cli-pinning.patch (with --reject if it partially fails)
+# 4. Waits for you to make changes in vscode/
+# 5. Press any key → regenerates the patch from git diff --staged -U1
 ```
 
-#### Step 2: Apply Existing Patches
+The last argument is the patch being edited. All preceding arguments are prerequisites that form the baseline. **Always list all patches your target depends on.**
 
-To work on an existing patch:
-```bash
-# Apply prerequisite patches + the target patch for editing
-./dev/patch.sh prerequisite1 prerequisite2 target-patch
+### Manual Patch Workflow
 
-# Example: To modify the brand.patch
-./dev/patch.sh brand
-```
+If `dev/patch.sh` isn't suitable (e.g. non-interactive environment):
 
-The `dev/patch.sh` script:
-- Resets vscode to clean state
-- Applies the helper settings patch
-- Applies all listed prerequisite patches
-- Applies the target patch (last argument)
-- Waits for you to make changes
-- Regenerates the patch file when you press a key
-
-#### Step 3: Making Changes
-
-After running `dev/patch.sh`:
-1. Edit files in `vscode/` as needed
-2. Press any key in the terminal when done
-3. The script regenerates the patch file automatically
-
-#### Manual Patch Creation/Update
-
-If working manually:
 ```bash
 cd vscode
+git reset --hard HEAD          # Clean state
 
-# Make your changes to the source files
+# Apply prerequisites
+git apply --ignore-whitespace ../patches/binary-name.patch
+git add . && git commit --no-verify -q -m "baseline"
+
+# Make your changes to existing VS Code files
 # ...
 
-# Stage and generate diff
+# Generate the patch
 git add .
-git diff --staged -U1 > ../patches/your-patch-name.patch
+git diff --staged -U1 > ../patches/my-feature.patch
 ```
 
-**CRITICAL: Never write or edit patch files by hand.** Always generate them from `git diff --staged` inside the `vscode/` directory. The unified diff format is strict — hand-written patches will fail with "corrupt patch" errors during `git apply`. If you need to update a patch, apply it, make your changes in `vscode/`, and regenerate the diff.
-
-### Testing Patches
-
-#### Validate All Patches Apply Cleanly
+### Validating Patches
 
 ```bash
-./dev/update_patches.sh
-```
-
-This script:
-- Iterates through all patches
-- Attempts to apply each one
-- If a patch fails, it applies with `--reject` and pauses for manual resolution
-- Regenerates any patches that needed fixing
-
-#### Full Build Test
-
-```bash
-# Run a complete local build
-./dev/build.sh
-
-# Options:
-#   -i    Build insider version
-#   -l    Use latest vscode version
-#   -o    Skip build (only prepare source)
-#   -s    Skip source preparation (use existing vscode/)
-```
-
-### Common Development Tasks
-
-#### Creating a New Patch
-
-1. Apply all prerequisite patches that your change depends on
-2. Make your changes in `vscode/`
-3. Generate the patch:
-   ```bash
-   cd vscode
-   git add .
-   git diff --staged -U1 > ../patches/my-new-feature.patch
-   ```
-4. Add the patch to the appropriate location in `prepare_vscode.sh` if it should be applied during builds
-
-#### Updating a Patch After Upstream Changes
-
-When VS Code updates and a patch no longer applies:
-```bash
-# Run update script - it will pause on failing patches
+# Test all patches apply cleanly in sequence:
 ./dev/update_patches.sh
 
-# Fix the conflicts in vscode/, then press any key
-# The script regenerates the fixed patch
-```
-
-#### Debugging Patch Application
-
-```bash
+# Or manually test one:
 cd vscode
-git apply --check ../patches/problem.patch    # Dry run
-git apply --reject ../patches/problem.patch   # Apply with .rej files for conflicts
+git apply --check ../patches/my-feature.patch
 ```
 
-## Key Scripts Reference
+### Patch Dependencies
+
+Some Codex patches modify files that earlier patches also touch. When this happens, the later patch must be generated against a tree that includes the earlier patch. Current known dependencies:
+
+| Patch | Depends on |
+|-------|-----------|
+| `feat-cli-pinning.patch` | `binary-name.patch` (both modify `nativeHostMainService.ts`) |
+
+If a patch fails to apply with "patch does not apply", check whether a prerequisite patch changed the same file. Regenerate using `dev/patch.sh` with the prerequisite listed first.
+
+## Codex-Specific Components
+
+### CodexConductor (Workbench Contribution)
+
+**Location:** `src/stable/src/vs/workbench/contrib/codexConductor/`
+**Patch:** `patches/feat-codex-conductor.patch` (adds the import to `workbench.common.main.ts`)
+
+Enforces project-scoped extension version pins. Reads `pinnedExtensions` from project `metadata.json` or Frontier's `workspaceState`, downloads VSIXs from GitHub Release URLs, installs into deterministic VS Code profiles, and switches the extension host. Includes mid-session detection, reload-loop circuit breaker, and automatic profile cleanup.
+
+### CLI Pin Commands (Rust)
+
+**Overlay:** `src/stable/cli/src/commands/pin.rs`
+**Patch:** `patches/feat-cli-pinning.patch` (registers the `pin` subcommand in args/argv, adds `PinningError`, refactors macOS shell command install for `codex-cli` symlink)
+
+Adds `codex pin list/add/remove` to the Rust CLI. The `add` command downloads a remote VSIX, extracts the extension ID and version, and writes the pin to `metadata.json`.
+
+### Extension Bundling
+
+**Config:** `bundle-extensions.json`
+**Script:** `get-extensions.sh`
+
+Declarative JSON config for extensions downloaded as pre-built VSIXs from GitHub Releases during the build.
+
+## Key Scripts
 
 | Script | Purpose |
 |--------|---------|
-| `get_repo.sh` | Clone vscode at correct version |
-| `prepare_vscode.sh` | Apply patches and prepare for build |
-| `build.sh` | Main build script |
-| `dev/build.sh` | Local development build |
-| `dev/patch.sh` | Apply patches for editing a single patch |
-| `dev/update_patches.sh` | Validate/update all patches |
-| `dev/clean_codex.sh` | Remove all Codex app data from macOS user dirs (reset to clean state; macOS only) |
-| `utils.sh` | Common functions including `apply_patch` |
+| `dev/build.sh` | Local development build (main entry point) |
+| `dev/patch.sh` | Apply prerequisite patches + edit a target patch |
+| `dev/update_patches.sh` | Validate/fix all patches sequentially |
+| `dev/clean_codex.sh` | Remove all Codex app data from macOS (reset to clean state) |
+| `get_repo.sh` | Clone vscode at the commit specified in `upstream/stable.json` |
+| `prepare_vscode.sh` | Copy overlays, merge product.json, apply patches, npm ci |
+| `build.sh` | Compile (gulp), bundle extensions, produce platform binary |
+| `get-extensions.sh` | Download VSIXs listed in `bundle-extensions.json` |
 
-## Build Environment
+## Version Tracking
 
-The build process:
-1. `get_repo.sh` - Fetches vscode source at a specific commit
-2. `prepare_vscode.sh` - Applies patches, copies branding, runs npm install
-3. `build.sh` - Compiles the application
+The target VS Code version is in `upstream/stable.json`:
 
-Environment variables:
-- `VSCODE_QUALITY`: "stable" or "insider"
-- `OS_NAME`: "osx", "linux", or "windows"
-- `VSCODE_ARCH`: CPU architecture
+```json
+{
+  "tag": "1.108.1",
+  "commit": "585eba7c0c34fd6b30faac7c62a42050bfbc0086"
+}
+```
 
-### Version Tracking
-
-The VS Code version to build is determined by:
-
-1. **`upstream/stable.json`** (or `insider.json`) - Contains the target VS Code tag and commit:
-   ```json
-   {
-     "tag": "1.100.0",
-     "commit": "19e0f9e681ecb8e5c09d8784acaa601316ca4571"
-   }
-   ```
-
-2. **`VSCODE_LATEST=yes`** - If set, queries Microsoft's update API for the latest version instead
-
-When syncing upstream, update these JSON files to match VSCodium's versions to ensure patches are compatible.
+The Codex release version appends a time-based patch number: `{tag}.{day*24+hour}` (e.g. `1.108.12007`).
 
 ## Syncing with Upstream VSCodium
 
-This is the most challenging maintenance task. VSCodium regularly updates their patches and build scripts to support new VS Code versions.
-
-### Check Current Status
-
-```bash
-git fetch origin
-git log --oneline origin/master -5                    # See upstream's recent changes
-git rev-list --count $(git merge-base HEAD origin/master)..origin/master  # Commits behind
-```
-
 ### Codex-Specific Customizations to Preserve
 
-When merging upstream, these are our key customizations that must be preserved:
-
-1. **Branding** (`src/stable/`, `src/insider/`, `icons/`)
-   - Custom icons and splash screens
-   - Keep all Codex assets
-
-2. **GitHub Workflows** (`.github/workflows/`)
-   - Simplified compared to VSCodium
-   - Uses different release repos (genesis-ai-dev/codex, BiblioNexus-Foundation/codex)
-   - Has custom workflows: `docker-build-push.yml`, `patch-rebuild.yml`, `manual-release.yml`
-
-3. **Windows MSI Files** (`build/windows/msi/`)
-   - Files renamed from `vscodium.*` to `codex.*`
-   - References updated for Codex branding
-
-4. **Product Configuration** (`product.json`, `prepare_vscode.sh`)
-   - URLs point to genesis-ai-dev/codex repos
-   - App names, identifiers set to Codex
-
-5. **Custom Patches** (`patches/`)
-   - `patches/user/microphone.patch` - Codex-specific
-   - Minor modifications to other patches for branding
-
-6. **Windows Code Signing** (`.github/workflows/stable-windows.yml`)
-   - SSL.com eSigner integration for code signing
-   - Signs application binaries (.exe, .dll) before packaging
-   - Signs installer packages (.exe, .msi) after packaging
-   - Required secrets: `ES_USERNAME`, `ES_PASSWORD`, `ES_CREDENTIAL_ID`, `ES_TOTP_SECRET`
-   - **Must preserve**: The signing steps between "Build" and "Prepare assets", and after "Upload unsigned artifacts"
+1. **Branding** — `src/stable/`, `src/insider/`, `icons/`
+2. **GitHub Workflows** — Simplified vs VSCodium. Custom: `docker-build-push.yml`, `patch-rebuild.yml`, `manual-release.yml`
+3. **Windows MSI** — `build/windows/msi/codex.*` (renamed from `vscodium.*`)
+4. **Product config** — `prepare_vscode.sh` (URLs, app names)
+5. **Custom patches** — `patches/feat-*` (Codex features), `patches/user/*` (microphone, UI tweaks)
+6. **Windows code signing** — SSL.com eSigner in `stable-windows.yml`
+7. **Extension bundling** — `bundle-extensions.json`, `get-extensions.sh`
+8. **Workbench contributions** — `src/stable/src/vs/workbench/contrib/codexConductor/`
+9. **Rust CLI additions** — `src/stable/cli/src/commands/pin.rs`
 
 ### Merge Strategy
 
-#### Option A: Incremental Merge (Recommended for small gaps)
-
-```bash
-# Create a working branch
-git checkout -b upstream-sync
-
-# Merge upstream
-git merge origin/master
-
-# Resolve conflicts - most will be in:
-#   - .github/workflows/ (keep ours, incorporate new build steps if needed)
-#   - patches/*.patch (need careful merge - see below)
-#   - build/windows/msi/ (keep our codex.* files)
-#   - prepare_vscode.sh (keep our branding, adopt new build logic)
-```
-
-#### Option B: Cherry-pick Patch Updates (Recommended for large gaps)
-
-When far behind (like 1.99 → 1.108), it's often easier to:
-
-1. **Identify patch update commits** in upstream:
-   ```bash
-   git log origin/master --oneline --grep="update patches"
-   ```
-
-2. **Cherry-pick or manually apply** the patch changes:
-   ```bash
-   # See what patches changed in a specific upstream commit
-   git show <commit> -- patches/
-   ```
-
-3. **Copy updated patches** from upstream, then re-apply our branding changes
-
-#### Option C: Reset and Re-apply Customizations
-
-For very large gaps, it may be cleanest to:
-
-1. Create a fresh branch from upstream
-2. Re-apply Codex customizations on top
-3. This ensures we get all upstream fixes cleanly
-
-### Resolving Patch Conflicts
-
-When upstream updates patches that we've also modified:
-
-1. **Compare the patches:**
-   ```bash
-   git diff origin/master -- patches/brand.patch
-   ```
-
-2. **Accept upstream's patch structure** (they've adapted to new VS Code)
-
-3. **Re-apply our branding on top:**
-   - Our changes are usually just `VSCodium` → `Codex` type substitutions
-   - The placeholder system (`!!APP_NAME!!`) handles most of this automatically
-
-### After Merging: Validate Everything
-
-```bash
-# 1. Update upstream/stable.json to new version if needed
-# 2. Test patches apply cleanly
-./dev/update_patches.sh
-
-# 3. Run a full local build
-./dev/build.sh -l  # -l uses latest VS Code version
-
-# 4. If patches fail, fix them one by one
-# The update_patches.sh script will pause on failures
-```
-
-### Common Conflict Patterns
-
-| File/Area | Typical Resolution |
-|-----------|-------------------|
-| `.github/workflows/*.yml` | Keep our simplified versions, cherry-pick important CI fixes |
-| `.github/workflows/stable-windows.yml` | **Preserve code signing steps** - keep SSL.com eSigner integration intact |
-| `patches/*.patch` | Take upstream's version, verify our branding placeholders work |
-| `prepare_vscode.sh` | Keep our branding URLs/names, adopt new build logic |
-| `build/windows/msi/` | Keep our `codex.*` files, apply equivalent changes from `vscodium.*` |
-| `README.md` | Keep ours |
-| `product.json` | Keep ours (merged at build time anyway) |
-
-## Tips
-
-- Always work from a clean vscode state when creating patches
-- Keep patches focused and minimal - one logical change per patch
-- Test patches apply to a fresh clone before committing
-- The `vscode/` directory is gitignored - your patch files are the persistent record
-- When syncing upstream, focus on patch files first - they're the core of the build
+For small gaps: `git merge origin/master`, resolve conflicts.
+For large gaps: cherry-pick patch updates from upstream, re-apply Codex customizations.
+After merging: `./dev/update_patches.sh` then `./dev/build.sh` to validate.
