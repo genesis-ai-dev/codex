@@ -28,10 +28,19 @@ interface PinnedExtensionEntry {
 }
 
 type PinnedExtensions = Record<string, PinnedExtensionEntry>;
+type RequiredExtensions = Record<string, string>;
+
+interface ProjectMetadata {
+	meta?: {
+		pinnedExtensions?: PinnedExtensions;
+		requiredExtensions?: RequiredExtensions;
+	};
+}
 
 /** Maps profile name → array of project folder URIs that reference it. */
 type ProfileAssociations = Record<string, string[]>;
 
+const CODEX_EDITOR_EXTENSION_ID = 'project-accelerate.codex-editor-extension';
 const CIRCUIT_BREAKER_KEY = 'codex.conductor.enforcementAttempts';
 const CIRCUIT_BREAKER_MAX = 3;
 const CIRCUIT_BREAKER_WINDOW_MS = 30_000;
@@ -96,6 +105,8 @@ export class CodexConductorContribution extends Disposable implements IWorkbench
 
 		// Listen for sync completions from Frontier
 		this.listenForSyncCompletion();
+
+		await this.logStartupExtensionState();
 	}
 
 	// ── Mid-session signals ────────────────────────────────────────────
@@ -267,6 +278,56 @@ export class CodexConductorContribution extends Disposable implements IWorkbench
 			// Malformed — ignore
 		}
 		return undefined;
+	}
+
+	private async logStartupExtensionState(): Promise<void> {
+		const installed = await this.extensionManagementService.getInstalled();
+		const codexEditorVersion = installed.find(e => e.identifier.id.toLowerCase() === CODEX_EDITOR_EXTENSION_ID)?.manifest.version ?? 'not installed';
+		const frontierAuthVersion = installed.find(e => e.identifier.id.toLowerCase() === FRONTIER_EXTENSION_ID)?.manifest.version ?? 'not installed';
+		const currentProfileName = this.userDataProfileService.currentProfile.name;
+		const requiredExtensions = await this.readRequiredExtensionsFromMetadata();
+		const pinnedExtensions = await this.readEffectivePinnedExtensions();
+
+		this.logService.info(
+			`[CodexConductor] Startup extension state — profile=${currentProfileName}, ${CODEX_EDITOR_EXTENSION_ID}=${codexEditorVersion}, ${FRONTIER_EXTENSION_ID}=${frontierAuthVersion}, pinnedExtensions=${this.formatObjectForLog(pinnedExtensions)}, requiredExtensions=${this.formatObjectForLog(requiredExtensions)}`
+		);
+	}
+
+	private async readRequiredExtensionsFromMetadata(): Promise<RequiredExtensions> {
+		const metadata = await this.readProjectMetadata();
+		return metadata?.meta?.requiredExtensions || {};
+	}
+
+	private async readEffectivePinnedExtensions(): Promise<PinnedExtensions> {
+		const storagePins = this.readPinsFromStorage();
+		if (storagePins) {
+			try {
+				return JSON.parse(storagePins);
+			} catch {
+				// Ignore malformed storage data and fall back to metadata.json.
+			}
+		}
+
+		const metadata = await this.readProjectMetadata();
+		return metadata?.meta?.pinnedExtensions || {};
+	}
+
+	private async readProjectMetadata(): Promise<ProjectMetadata | undefined> {
+		if (!this.metadataUri) {
+			return undefined;
+		}
+
+		try {
+			const content = await this.fileService.readFile(this.metadataUri);
+			return JSON.parse(content.value.toString()) as ProjectMetadata;
+		} catch {
+			return undefined;
+		}
+	}
+
+	private formatObjectForLog<T extends object>(value: T): string {
+		const sortedEntries = Object.entries(value).sort(([left], [right]) => left.localeCompare(right));
+		return JSON.stringify(Object.fromEntries(sortedEntries));
 	}
 
 	// ── Enforcement ────────────────────────────────────────────────────
