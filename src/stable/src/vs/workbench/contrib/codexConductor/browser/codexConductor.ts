@@ -8,19 +8,21 @@ import { IWorkbenchContribution } from '../../../common/contributions.js';
 import { IFileService } from '../../../../platform/files/common/files.js';
 import { IWorkspaceContextService, WorkbenchState } from '../../../../platform/workspace/common/workspace.js';
 import { IUserDataProfileManagementService, IUserDataProfileService } from '../../../services/userDataProfile/common/userDataProfile.js';
-import { IUserDataProfilesService } from '../../../../platform/userDataProfile/common/userDataProfile.js';
-import { IExtensionManagementServerService, IWorkbenchExtensionManagementService } from '../../../services/extensionManagement/common/extensionManagement.js';
+import { IUserDataProfile, IUserDataProfilesService } from '../../../../platform/userDataProfile/common/userDataProfile.js';
+import { IWorkbenchExtensionManagementService } from '../../../services/extensionManagement/common/extensionManagement.js';
 import { IStorageService, StorageScope, StorageTarget } from '../../../../platform/storage/common/storage.js';
 import { INotificationService, Severity } from '../../../../platform/notification/common/notification.js';
 import { URI } from '../../../../base/common/uri.js';
 import { joinPath } from '../../../../base/common/resources.js';
 import { IHostService } from '../../../services/host/browser/host.js';
 import { CommandsRegistry } from '../../../../platform/commands/common/commands.js';
+import { ISharedProcessService } from '../../../../platform/ipc/electron-browser/services.js';
 import { ILogService } from '../../../../platform/log/common/log.js';
 import { IDialogService } from '../../../../platform/dialogs/common/dialogs.js';
 import { IClipboardService } from '../../../../platform/clipboard/common/clipboardService.js';
 import { IProductService } from '../../../../platform/product/common/productService.js';
 import { OS, OperatingSystem } from '../../../../base/common/platform.js';
+import { timeout } from '../../../../base/common/async.js';
 
 interface PinnedExtensionEntry {
 	version: string;
@@ -74,10 +76,10 @@ export class CodexConductorContribution extends Disposable implements IWorkbench
 		@INotificationService private readonly notificationService: INotificationService,
 		@IHostService private readonly hostService: IHostService,
 		@ILogService private readonly logService: ILogService,
+		@ISharedProcessService private readonly sharedProcessService: ISharedProcessService,
 		@IDialogService private readonly dialogService: IDialogService,
 		@IClipboardService private readonly clipboardService: IClipboardService,
 		@IProductService private readonly productService: IProductService,
-		@IExtensionManagementServerService private readonly extensionManagementServerService: IExtensionManagementServerService
 	) {
 		super();
 
@@ -191,19 +193,17 @@ export class CodexConductorContribution extends Disposable implements IWorkbench
 		try {
 			const profile = await this.userDataProfilesService.createNamedProfile(targetProfileName);
 
-			const localServer = this.extensionManagementServerService.localExtensionManagementServer;
-			if (!localServer) {
-				handle.close();
-				this.logService.error('[CodexConductor] No local extension management server available');
-				return;
-			}
-
-			for (const [id, pin] of Object.entries(pins)) {
-				this.logService.info(`[CodexConductor] Installing pinned VSIX for "${id}" v${pin.version} from ${pin.url}`);
-				await localServer.extensionManagementService.install(URI.parse(pin.url), {
-					installGivenVersion: true,
-					profileLocation: profile.extensionsResource
-				});
+			try {
+				await this.installPinnedExtensions(pins, profile);
+			} catch (e: unknown) {
+				// Installation failed after all retries — cleanup the incomplete profile
+				try {
+					await this.userDataProfilesService.removeProfile(profile);
+					this.logService.info(`[CodexConductor] Cleaned up incomplete profile "${targetProfileName}" after installation failure`);
+				} catch (cleanupError) {
+					this.logService.warn(`[CodexConductor] Failed to clean up incomplete profile "${targetProfileName}": ${cleanupError}`);
+				}
+				throw e;
 			}
 
 			handle.close();
@@ -224,8 +224,56 @@ export class CodexConductorContribution extends Disposable implements IWorkbench
 			}
 		} catch (e: unknown) {
 			handle.close();
-			const message = e instanceof Error ? e.message : String(e);
-			this.notificationService.error(`Failed to install pinned extension: ${message}`);
+			this.notificationService.prompt(
+				Severity.Error,
+				'Failed to install pinned extension.',
+				[{
+					label: 'Copy Error Report',
+					run: () => this.showErrorReport(pins, e)
+				}]
+			);
+		}
+	}
+
+	private async installPinnedExtensions(pins: PinnedExtensions, profile: IUserDataProfile): Promise<void> {
+		// Use the shared process 'extensions' IPC channel directly to bypass
+		// NativeExtensionManagementService.downloadVsix(), which downloads in the
+		// renderer using browser fetch() — that fails for GitHub release URLs due
+		// to CORS on the 302 redirect. The shared process downloads via Node.js
+		// networking which handles redirects without CORS restrictions.
+		const channel = this.sharedProcessService.getChannel('extensions');
+
+		for (const [id, pin] of Object.entries(pins)) {
+			let lastError: Error | undefined;
+			for (let attempt = 1; attempt <= 3; attempt++) {
+				try {
+					this.logService.info(`[CodexConductor] Installing pinned VSIX for "${id}" v${pin.version} from ${pin.url} (attempt ${attempt}/3)`);
+
+					await channel.call('install', [URI.parse(pin.url), {
+						installGivenVersion: true,
+						profileLocation: profile.extensionsResource
+					}]);
+					lastError = undefined;
+					break; // Success
+				} catch (e: unknown) {
+					lastError = e instanceof Error ? e : new Error(String(e));
+					(lastError as any).extensionId = id;
+					(lastError as any).url = pin.url;
+					const code = (lastError as any).code ? ` [Code: ${(lastError as any).code}]` : '';
+					const stack = lastError.stack ? `\nStack: ${lastError.stack}` : '';
+					this.logService.error(`[CodexConductor] Failed to install pinned extension ${id} from ${pin.url} (attempt ${attempt}/3) [Online: ${navigator.onLine}]: ${lastError.message}${code}${stack}`);
+					console.error(`[CodexConductor] Installation error for ${id} (attempt ${attempt}/3):`, lastError);
+
+					if (attempt < 3) {
+						const delay = Math.pow(2, attempt) * 1000;
+						await timeout(delay);
+					}
+				}
+			}
+
+			if (lastError) {
+				throw lastError;
+			}
 		}
 	}
 
@@ -406,7 +454,7 @@ export class CodexConductorContribution extends Disposable implements IWorkbench
 					run: () => this.switchToDefaultProfile()
 				}, {
 					label: 'Copy Error Report',
-					run: () => this.showErrorReport(mismatches, pins)
+					run: () => this.showErrorReport(pins, undefined, mismatches)
 				}]
 			);
 			return;
@@ -432,27 +480,29 @@ export class CodexConductorContribution extends Disposable implements IWorkbench
 
 		const profile = await this.userDataProfilesService.createNamedProfile(targetProfileName);
 
-		const localServer = this.extensionManagementServerService.localExtensionManagementServer;
-		if (!localServer) {
-			this.logService.error('[CodexConductor] No local extension management server available');
-			return;
-		}
-
-		for (const [id, pin] of Object.entries(pins)) {
+		try {
+			await this.installPinnedExtensions(pins, profile);
+		} catch (e: unknown) {
+			// Installation failed after all retries — cleanup the incomplete profile
 			try {
-				this.logService.info(`[CodexConductor] Installing pinned VSIX for "${id}" v${pin.version} from ${pin.url}`);
-				// Pass the HTTP URI directly to the extension management server.
-				// On desktop, this routes through IPC to the shared process which
-				// downloads via Node.js/Electron net (handles redirects properly).
-				await localServer.extensionManagementService.install(URI.parse(pin.url), {
-					installGivenVersion: true,
-					profileLocation: profile.extensionsResource
-				});
-			} catch (e: unknown) {
-				const message = e instanceof Error ? e.message : String(e);
-				this.notificationService.error(`Failed to install pinned extension ${id}: ${message}`);
-				return;
+				await this.userDataProfilesService.removeProfile(profile);
+				this.logService.info(`[CodexConductor] Cleaned up incomplete profile "${targetProfileName}" after installation failure`);
+			} catch (cleanupError) {
+				this.logService.warn(`[CodexConductor] Failed to clean up incomplete profile "${targetProfileName}": ${cleanupError}`);
 			}
+			
+			this.notificationService.prompt(
+				Severity.Error,
+				'Failed to install pinned extension.',
+				[{
+					label: 'Open in Default Profile',
+					run: () => this.switchToDefaultProfile()
+				}, {
+					label: 'Copy Error Report',
+					run: () => this.showErrorReport(pins, e)
+				}]
+			);
+			return;
 		}
 
 		await this.userDataProfileManagementService.switchProfile(profile);
@@ -615,7 +665,7 @@ export class CodexConductorContribution extends Disposable implements IWorkbench
 
 	// ── Error reporting ────────────────────────────────────────────────
 
-	private async showErrorReport(mismatches: string[], pins: PinnedExtensions): Promise<void> {
+	private async showErrorReport(pins: PinnedExtensions, error?: unknown, mismatches?: string[]): Promise<void> {
 		const osName = OS === OperatingSystem.Macintosh ? 'macOS' : OS === OperatingSystem.Windows ? 'Windows' : 'Linux';
 		const workspaceFolder = this.workspaceContextService.getWorkspace().folders[0];
 
@@ -626,22 +676,40 @@ export class CodexConductorContribution extends Disposable implements IWorkbench
 			`OS: ${osName}`,
 			`Profile: ${this.userDataProfileService.currentProfile.name}`,
 			`Project: ${workspaceFolder?.name || 'unknown'}`,
+			`Online: ${navigator.onLine}`,
 			'',
-			'Mismatches:',
-			...mismatches.map(m => `  - ${m}`),
-			'',
-			'Pinned Extensions:',
-			...Object.entries(pins).map(([id, pin]) =>
-				`  - ${id}: v${pin.version} (${pin.url})`
-			),
-			'',
-			'---',
-		].join('\n');
+		];
+
+		if (error) {
+			const message = error instanceof Error ? error.message : String(error);
+			const code = (error as any).code ? ` [Code: ${(error as any).code}]` : '';
+			const extensionId = (error as any).extensionId ? ` [Extension: ${(error as any).extensionId}]` : '';
+			const url = (error as any).url ? ` [URL: ${(error as any).url}]` : '';
+
+			report.push('Error:');
+			report.push(`  - ${message}${code}${extensionId}${url}`);
+			report.push('');
+		}
+
+		if (mismatches && mismatches.length > 0) {
+			report.push('Mismatches:');
+			report.push(...mismatches.map(m => `  - ${m}`));
+			report.push('');
+		}
+
+		report.push('Pinned Extensions:');
+		report.push(...Object.entries(pins).map(([id, pin]) =>
+			`  - ${id}: v${pin.version} (${pin.url})`
+		));
+		report.push('');
+		report.push('---');
+
+		const fullReport = report.join('\n');
 
 		const { result } = await this.dialogService.prompt({
 			type: Severity.Error,
 			message: 'Something went wrong while switching profiles',
-			detail: report,
+			detail: fullReport,
 			buttons: [
 				{ label: 'Copy to Clipboard', run: () => true },
 			],
@@ -649,7 +717,7 @@ export class CodexConductorContribution extends Disposable implements IWorkbench
 		});
 
 		if (await result) {
-			await this.clipboardService.writeText(report);
+			await this.clipboardService.writeText(fullReport);
 		}
 	}
 
