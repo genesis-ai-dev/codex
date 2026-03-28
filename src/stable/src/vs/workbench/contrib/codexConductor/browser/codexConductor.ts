@@ -799,9 +799,7 @@ export class CodexConductorContribution extends Disposable implements IWorkbench
 		this.logService.info(`[CodexConductor] setProfileForWorkspace completed`);
 
 		if (this.userDataProfileService.currentProfile.id !== profile.id) {
-			this.logService.info(`[CodexConductor] Profile mismatch (${currentProfileName} != ${profile.name}) — triggering authoritative reload in 2s`);
-			// Delay to ensure IPC calls to shared process are processed and persisted
-			await timeout(2000);
+			this.logService.info(`[CodexConductor] Profile mismatch (${currentProfileName} != ${profile.name}) — triggering authoritative reload`);
 			this.hostService.reload({ forceProfile: profile.name });
 		} else {
 			this.logService.info(`[CodexConductor] Already on target profile ${profile.name} — no reload needed`);
