@@ -168,8 +168,16 @@ If a patch fails to apply with "patch does not apply", check whether a prerequis
 
 **Location:** `src/stable/src/vs/workbench/contrib/codexConductor/`
 **Patch:** `patches/feat-codex-conductor.patch` (adds the import to `workbench.common.main.ts`)
+**Robustness Patch:** `patches/zzz-authoritative-reload.patch` (enables `forceProfile` in window reloads)
 
-Enforces project-scoped extension version pins. Reads `pinnedExtensions` from project `metadata.json` or Frontier's `workspaceState`, downloads VSIXs from GitHub Release URLs, installs into deterministic VS Code profiles, and switches the extension host. Includes mid-session detection, reload-loop circuit breaker, and automatic profile cleanup.
+Enforces project-scoped extension version pins. Reads `pinnedExtensions` from project `metadata.json` or Frontier's `workspaceState`, downloads VSIXs from GitHub Release URLs, installs into deterministic VS Code profiles, and switches the extension host.
+
+**Key Robustness Features:**
+- **Authoritative Reload:** Uses a patched `reload({ forceProfile: name })` IPC command to ensure the Main process opens the new window in the correct profile, bypassing persistence race conditions and dev-mode restrictions.
+- **Initialization Yielding:** Works in tandem with `codex-editor` which returns early from `activate()` if a mismatch is detected, showing a "pins applying" message on the splash screen.
+- **Duplicate Prevention:** Explicitly calls `resetWorkspaces()` before associating a profile to ensure lookup consistency.
+- **Loop Guard:** Includes a 3-cycle circuit breaker to prevent infinite reload loops if enforcement fails.
+- **Lifecycle Management:** Automatic cleanup of orphaned profiles every 14 days.
 
 ### CLI Pin Commands (Rust)
 

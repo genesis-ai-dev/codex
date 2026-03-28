@@ -6,8 +6,8 @@
 import { Disposable, DisposableStore } from '../../../../base/common/lifecycle.js';
 import { IWorkbenchContribution } from '../../../common/contributions.js';
 import { IFileService } from '../../../../platform/files/common/files.js';
-import { IWorkspaceContextService, WorkbenchState } from '../../../../platform/workspace/common/workspace.js';
-import { IUserDataProfileManagementService, IUserDataProfileService } from '../../../services/userDataProfile/common/userDataProfile.js';
+import { IWorkspaceContextService, WorkbenchState, toWorkspaceIdentifier, isSingleFolderWorkspaceIdentifier } from '../../../../platform/workspace/common/workspace.js';
+import { IUserDataProfileService } from '../../../services/userDataProfile/common/userDataProfile.js';
 import { IUserDataProfile, IUserDataProfilesService } from '../../../../platform/userDataProfile/common/userDataProfile.js';
 import { IWorkbenchExtensionManagementService } from '../../../services/extensionManagement/common/extensionManagement.js';
 import { IStorageService, StorageScope, StorageTarget } from '../../../../platform/storage/common/storage.js';
@@ -70,7 +70,6 @@ export class CodexConductorContribution extends Disposable implements IWorkbench
 		@IWorkspaceContextService private readonly workspaceContextService: IWorkspaceContextService,
 		@IUserDataProfileService private readonly userDataProfileService: IUserDataProfileService,
 		@IUserDataProfilesService private readonly userDataProfilesService: IUserDataProfilesService,
-		@IUserDataProfileManagementService private readonly userDataProfileManagementService: IUserDataProfileManagementService,
 		@IWorkbenchExtensionManagementService private readonly extensionManagementService: IWorkbenchExtensionManagementService,
 		@IStorageService private readonly storageService: IStorageService,
 		@INotificationService private readonly notificationService: INotificationService,
@@ -251,6 +250,7 @@ export class CodexConductorContribution extends Disposable implements IWorkbench
 
 					await channel.call('install', [URI.parse(pin.url), {
 						installGivenVersion: true,
+						pinned: true,
 						profileLocation: profile.extensionsResource
 					}]);
 					lastError = undefined;
@@ -474,7 +474,7 @@ export class CodexConductorContribution extends Disposable implements IWorkbench
 			// ({shortName}-v{version}) so a name match guarantees the correct extensions
 			// are installed. Skip download/install and just switch.
 			this.logService.info(`[CodexConductor] Profile "${targetProfileName}" already exists — switching without download`);
-			await this.userDataProfileManagementService.switchProfile(existingProfile);
+			await this.switchProfileAndReload(existingProfile);
 			return;
 		}
 
@@ -490,7 +490,7 @@ export class CodexConductorContribution extends Disposable implements IWorkbench
 			} catch (cleanupError) {
 				this.logService.warn(`[CodexConductor] Failed to clean up incomplete profile "${targetProfileName}": ${cleanupError}`);
 			}
-			
+
 			this.notificationService.prompt(
 				Severity.Error,
 				'Failed to install pinned extension.',
@@ -505,7 +505,7 @@ export class CodexConductorContribution extends Disposable implements IWorkbench
 			return;
 		}
 
-		await this.userDataProfileManagementService.switchProfile(profile);
+		await this.switchProfileAndReload(profile);
 	}
 
 	private async revertIfPatchBuild(): Promise<void> {
@@ -522,7 +522,7 @@ export class CodexConductorContribution extends Disposable implements IWorkbench
 		const defaultProfile = this.userDataProfilesService.profiles.find(p => p.isDefault);
 		if (defaultProfile) {
 			this.logService.info(`[CodexConductor] No active pins — reverting from "${profileName}" to default profile`);
-			await this.userDataProfileManagementService.switchProfile(defaultProfile);
+			await this.switchProfileAndReload(defaultProfile);
 		}
 	}
 
@@ -764,10 +764,54 @@ export class CodexConductorContribution extends Disposable implements IWorkbench
 		this.storageService.store(CIRCUIT_BREAKER_KEY, JSON.stringify(attempts), StorageScope.WORKSPACE, StorageTarget.MACHINE);
 	}
 
+	/**
+	 * switchProfile() for folder workspaces only persists the profile association
+	 * (via setProfileForWorkspace) — it does NOT restart the extension host or
+	 * change the active profile in the current session. A window reload is needed
+	 * to make the switch effective. If the extension host restart is vetoed (e.g.
+	 * a custom editor like Startup Flow is open), switchProfile() throws
+	 * CancellationError and reverts the association — reload handles that too.
+	 */
+	private async switchProfileAndReload(profile: IUserDataProfile): Promise<void> {
+		const workspace = this.workspaceContextService.getWorkspace();
+		const workspaceIdentifier = toWorkspaceIdentifier(workspace);
+		const currentProfileName = this.userDataProfileService.currentProfile.name;
+
+		this.logService.info(`[CodexConductor] switchProfileAndReload: current=${currentProfileName}, target=${profile.name}`);
+		this.logService.info(`[CodexConductor] Workspace ID: ${workspaceIdentifier.id}`);
+		if (isSingleFolderWorkspaceIdentifier(workspaceIdentifier)) {
+			this.logService.info(`[CodexConductor] Workspace URI: ${workspaceIdentifier.uri.toString()}`);
+		}
+
+		// Explicitly set the association for the workspace.
+		// For folder workspaces, this is the primary way VS Code associates a profile.
+		this.logService.info(`[CodexConductor] Calling setProfileForWorkspace...`);
+
+		// First, clear any existing associations for this workspace to prevent duplicates
+		// that could cause lookup confusion in the Main process.
+		try {
+			await this.userDataProfilesService.resetWorkspaces();
+		} catch {
+			// Best effort
+		}
+
+		await this.userDataProfilesService.setProfileForWorkspace(workspaceIdentifier, profile);
+		this.logService.info(`[CodexConductor] setProfileForWorkspace completed`);
+
+		if (this.userDataProfileService.currentProfile.id !== profile.id) {
+			this.logService.info(`[CodexConductor] Profile mismatch (${currentProfileName} != ${profile.name}) — triggering authoritative reload in 2s`);
+			// Delay to ensure IPC calls to shared process are processed and persisted
+			await timeout(2000);
+			this.hostService.reload({ forceProfile: profile.name });
+		} else {
+			this.logService.info(`[CodexConductor] Already on target profile ${profile.name} — no reload needed`);
+		}
+	}
+
 	private async switchToDefaultProfile(): Promise<void> {
 		const profile = this.userDataProfilesService.profiles.find(p => p.isDefault);
 		if (profile) {
-			await this.userDataProfileManagementService.switchProfile(profile);
+			await this.switchProfileAndReload(profile);
 		}
 	}
 }
