@@ -111,7 +111,9 @@ fn read_metadata(path: &Path) -> Result<ProjectMetadata, AnyError> {
 
 fn write_metadata(path: &Path, metadata: &ProjectMetadata) -> Result<(), AnyError> {
 	let file = fs::File::create(path).map_err(|e| wrap(e, "Failed to create metadata.json"))?;
-	serde_json::to_writer_pretty(file, metadata).map_err(|e| wrap(e, "Failed to write metadata.json"))?;
+	let formatter = serde_json::ser::PrettyFormatter::with_indent(b"    ");
+	let mut ser = serde_json::Serializer::with_formatter(file, formatter);
+	metadata.serialize(&mut ser).map_err(|e| wrap(e, "Failed to write metadata.json"))?;
 	Ok(())
 }
 
@@ -194,17 +196,81 @@ fn resolve_project(ctx: &CommandContext, project_identifier: &str) -> Result<Pro
 	Ok(matches.remove(0))
 }
 
+/// Resolves a GitHub release page URL to a direct VSIX download URL.
+/// If the URL is already a direct URL (not a release page), returns it unchanged.
+///
+/// Matches: https://github.com/{owner}/{repo}/releases/tag/{tag}
+async fn resolve_vsix_url(client: &reqwest::Client, url: &str) -> Result<String, AnyError> {
+	let url = url.trim();
+	const PREFIX: &str = "https://github.com/";
+	const RELEASES_TAG: &str = "/releases/tag/";
+
+	if !url.starts_with(PREFIX) {
+		return Ok(url.to_string());
+	}
+
+	let after_host = &url[PREFIX.len()..];
+	let tag_pos = match after_host.find(RELEASES_TAG) {
+		Some(pos) => pos,
+		None => return Ok(url.to_string()),
+	};
+
+	let owner_repo = &after_host[..tag_pos];
+	let tag = &after_host[tag_pos + RELEASES_TAG.len()..];
+
+	if owner_repo.is_empty() || tag.is_empty() || owner_repo.matches('/').count() != 1 {
+		return Ok(url.to_string());
+	}
+
+	// Percent-encode characters that are unsafe in URL path segments.
+	// Tags are typically semver (0.24.1-pr123) so only + is a realistic risk.
+	let encoded_tag = tag.replace('%', "%25").replace(' ', "%20").replace('+', "%2B");
+	let api_url = format!("https://api.github.com/repos/{}/releases/tags/{}", owner_repo, encoded_tag);
+	log::emit(log::Level::Info, "pin", &format!("Resolving release page: {}", api_url));
+
+	let resp = client
+		.get(&api_url)
+		.header("Accept", "application/vnd.github+json")
+		.header("User-Agent", "codex-cli")
+		.send()
+		.await
+		.map_err(|e| wrap(e, "Failed to query GitHub API"))?
+		.error_for_status()
+		.map_err(|e| wrap(e, "GitHub API returned an error"))?;
+
+	let release: serde_json::Value = resp.json().await.map_err(|e| wrap(e, "Failed to parse GitHub API response"))?;
+
+	let assets = release["assets"]
+		.as_array()
+		.ok_or_else(|| AnyError::PinningError(PinningError("No assets found in GitHub release".to_string())))?;
+
+	let vsix_asset = assets
+		.iter()
+		.find(|a| a["name"].as_str().map_or(false, |n| n.ends_with(".vsix")))
+		.ok_or_else(|| AnyError::PinningError(PinningError("No .vsix asset found in GitHub release".to_string())))?;
+
+	let download_url = vsix_asset["browser_download_url"]
+		.as_str()
+		.ok_or_else(|| AnyError::PinningError(PinningError("Missing download URL for .vsix asset".to_string())))?;
+
+	log::emit(log::Level::Info, "pin", &format!("Resolved to: {}", download_url));
+	Ok(download_url.to_string())
+}
+
 async fn add_pin(ctx: CommandContext, project_id: String, args: PinAddArgs) -> Result<(), AnyError> {
 	let mut project_info = resolve_project(&ctx, &project_id)?;
 
-	log::emit(log::Level::Info, "pin", &format!("Inspecting VSIX at {}...", truncate_url(&args.url)));
+	// Resolve release page URLs to direct VSIX download URLs
+	let resolved_url = resolve_vsix_url(&ctx.http, &args.url).await?;
+
+	log::emit(log::Level::Info, "pin", &format!("Inspecting VSIX at {}...", truncate_url(&resolved_url)));
 
 	// Optimized VSIX metadata extraction using Range requests
-	let (extension_id, version) = match get_vsix_metadata_smart(&ctx.http, &args.url).await {
+	let (extension_id, version) = match get_vsix_metadata_smart(&ctx.http, &resolved_url).await {
 		Ok(meta) => meta,
 		Err(e) => {
 			log::emit(log::Level::Warn, "pin", &format!("Range request optimization not available, using full download: {}", e));
-			get_vsix_metadata_full(&ctx.http, &args.url).await?
+			get_vsix_metadata_full(&ctx.http, &resolved_url).await?
 		}
 	};
 
@@ -215,7 +281,7 @@ async fn add_pin(ctx: CommandContext, project_id: String, args: PinAddArgs) -> R
 		extension_id.clone(),
 		PinnedExtension {
 			version: version.to_string(),
-			url: args.url,
+			url: resolved_url,
 		},
 	);
 
