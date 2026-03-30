@@ -46,7 +46,7 @@ const CODEX_EDITOR_EXTENSION_ID = 'project-accelerate.codex-editor-extension';
 const CIRCUIT_BREAKER_KEY = 'codex.conductor.enforcementAttempts';
 const CIRCUIT_BREAKER_MAX = 3;
 const CIRCUIT_BREAKER_WINDOW_MS = 30_000;
-const CONDUCTOR_PROFILE_PATTERN = /^.+-v\d+\.\d+\.\d+(\+[0-9a-f]{4})?$/;
+const CONDUCTOR_PROFILE_ICON = 'repo-pinned';
 const FRONTIER_EXTENSION_ID = 'frontier-rnd.frontier-authentication';
 const PROFILE_ASSOCIATIONS_KEY = 'codex.conductor.profileAssociations';
 const LAST_CLEANUP_KEY = 'codex.conductor.lastCleanup';
@@ -196,7 +196,7 @@ export class CodexConductorContribution extends Disposable implements IWorkbench
 		handle.progress.infinite();
 
 		try {
-			const profile = await this.userDataProfilesService.createNamedProfile(targetProfileName);
+			const profile = await this.userDataProfilesService.createNamedProfile(targetProfileName, { icon: CONDUCTOR_PROFILE_ICON });
 
 			try {
 				await this.installPinnedExtensions(pins, profile);
@@ -483,7 +483,7 @@ export class CodexConductorContribution extends Disposable implements IWorkbench
 			return;
 		}
 
-		const profile = await this.userDataProfilesService.createNamedProfile(targetProfileName);
+		const profile = await this.userDataProfilesService.createNamedProfile(targetProfileName, { icon: CONDUCTOR_PROFILE_ICON });
 
 		try {
 			await this.installPinnedExtensions(pins, profile);
@@ -518,15 +518,15 @@ export class CodexConductorContribution extends Disposable implements IWorkbench
 			return;
 		}
 
-		// Only revert if the current profile looks like a conductor-managed profile
-		const profileName = this.userDataProfileService.currentProfile.name;
-		if (!CONDUCTOR_PROFILE_PATTERN.test(profileName)) {
+		// Only revert if the current profile was created by the conductor
+		const currentProfile = this.userDataProfileService.currentProfile;
+		if (currentProfile.icon !== CONDUCTOR_PROFILE_ICON) {
 			return;
 		}
 
 		const defaultProfile = this.userDataProfilesService.profiles.find(p => p.isDefault);
 		if (defaultProfile) {
-			this.logService.info(`[CodexConductor] No active pins — reverting from "${profileName}" to default profile`);
+			this.logService.info(`[CodexConductor] No active pins — reverting from "${currentProfile.name}" to default profile`);
 			await this.switchProfileAndReload(defaultProfile);
 		}
 	}
@@ -559,7 +559,7 @@ export class CodexConductorContribution extends Disposable implements IWorkbench
 	async runProfileCleanup(): Promise<void> {
 		const associations = this.getProfileAssociations();
 		const conductorProfiles = this.userDataProfilesService.profiles.filter(
-			p => !p.isDefault && CONDUCTOR_PROFILE_PATTERN.test(p.name)
+			p => !p.isDefault && p.icon === CONDUCTOR_PROFILE_ICON
 		);
 
 		if (conductorProfiles.length === 0) {
