@@ -64,6 +64,7 @@ export class CodexConductorContribution extends Disposable implements IWorkbench
 
 	private metadataUri: URI | undefined;
 	private lastSeenPinsSnapshot: string | undefined;
+	private readonly syncCompletionListener = this._register(new DisposableStore());
 
 	constructor(
 		@IFileService private readonly fileService: IFileService,
@@ -83,12 +84,15 @@ export class CodexConductorContribution extends Disposable implements IWorkbench
 		super();
 
 		this._register(CommandsRegistry.registerCommand('codex.conductor.cleanupProfiles', () => this.runProfileCleanup()));
+		this._register(this.workspaceContextService.onDidChangeWorkbenchState(() => this.initialize()));
 
 		this.initialize();
 	}
 
 	private async initialize(): Promise<void> {
 		if (this.workspaceContextService.getWorkbenchState() !== WorkbenchState.FOLDER) {
+			this.metadataUri = undefined;
+			await this.revertIfPatchBuild();
 			return;
 		}
 
@@ -119,15 +123,17 @@ export class CodexConductorContribution extends Disposable implements IWorkbench
 	 * the user to reload if so.
 	 */
 	private listenForSyncCompletion(): void {
-		const storageListener = this._register(new DisposableStore());
+		this.syncCompletionListener.clear();
 
-		this._register(this.storageService.onDidChangeValue(
-			StorageScope.WORKSPACE,
-			FRONTIER_EXTENSION_ID,
-			storageListener
-		)(() => {
-			this.checkForPinChanges();
-		}));
+		this.syncCompletionListener.add(
+			this.storageService.onDidChangeValue(
+				StorageScope.WORKSPACE,
+				FRONTIER_EXTENSION_ID,
+				this.syncCompletionListener
+			)(() => {
+				this.checkForPinChanges();
+			})
+		);
 	}
 
 	private async checkForPinChanges(): Promise<void> {
@@ -410,13 +416,12 @@ export class CodexConductorContribution extends Disposable implements IWorkbench
 					metadata = JSON.parse(content.value.toString());
 				} catch (parseError) {
 					this.logService.warn('[CodexConductor] metadata.json contains invalid JSON — extension pinning disabled');
-					return;
+					// metadata stays undefined — falls through to "no pins" handling below
 				}
 				pins = (metadata as { meta?: { pinnedExtensions?: PinnedExtensions } })?.meta?.pinnedExtensions || {};
 			} catch (e) {
 				// No metadata.json — not a Codex project, nothing to enforce
 				this.logService.trace('[CodexConductor] No metadata.json found — skipping enforcement');
-				return;
 			}
 		}
 
