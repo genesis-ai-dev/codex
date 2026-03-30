@@ -304,7 +304,7 @@ export class CodexConductorContribution extends Disposable implements IWorkbench
 			const content = await this.fileService.readFile(this.metadataUri);
 			const metadata = JSON.parse(content.value.toString());
 			const pins = metadata?.meta?.pinnedExtensions;
-			return pins ? JSON.stringify(pins) : undefined;
+			return pins && Object.keys(pins).length > 0 ? JSON.stringify(pins) : undefined;
 		} catch {
 			return undefined;
 		}
