@@ -780,6 +780,7 @@ export class CodexConductorContribution extends Disposable implements IWorkbench
 	private async switchProfileAndReload(profile: IUserDataProfile): Promise<void> {
 		const workspace = this.workspaceContextService.getWorkspace();
 		const workspaceIdentifier = toWorkspaceIdentifier(workspace);
+		const originalProfileId = this.userDataProfileService.currentProfile.id;
 		const currentProfileName = this.userDataProfileService.currentProfile.name;
 
 		this.logService.info(`[CodexConductor] switchProfileAndReload: current=${currentProfileName}, target=${profile.name}`);
@@ -803,7 +804,11 @@ export class CodexConductorContribution extends Disposable implements IWorkbench
 		await this.userDataProfilesService.setProfileForWorkspace(workspaceIdentifier, profile);
 		this.logService.info(`[CodexConductor] setProfileForWorkspace completed`);
 
-		if (this.userDataProfileService.currentProfile.id !== profile.id) {
+		// Compare against the profile ID captured BEFORE setProfileForWorkspace.
+		// setProfileForWorkspace may internally trigger changeCurrentProfile which
+		// updates currentProfile even if the extension host vetos the switch. Using
+		// the post-call currentProfile.id would incorrectly skip the reload.
+		if (originalProfileId !== profile.id) {
 			this.logService.info(`[CodexConductor] Profile mismatch (${currentProfileName} != ${profile.name}) — triggering authoritative reload`);
 			this.hostService.reload({ forceProfile: profile.name });
 		} else {
