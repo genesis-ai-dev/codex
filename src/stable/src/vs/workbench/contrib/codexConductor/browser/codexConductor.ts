@@ -300,18 +300,22 @@ export class CodexConductorContribution extends Disposable implements IWorkbench
 
 	/**
 	 * Reads remotePinnedExtensions from Frontier's workspaceState via
-	 * IStorageService. Returns the raw JSON string or undefined.
+	 * IStorageService. VS Code stores an extension's entire workspaceState
+	 * as a single JSON blob under the extension ID key, so we read that
+	 * blob and extract the `remotePinnedExtensions` field from within it.
+	 * Returns a stable JSON string or undefined.
 	 */
 	private readPinsFromStorage(): string | undefined {
 		const raw = this.storageService.get(
-			`${FRONTIER_EXTENSION_ID}.remotePinnedExtensions`,
+			FRONTIER_EXTENSION_ID,
 			StorageScope.WORKSPACE
 		);
 		if (!raw) {
 			return undefined;
 		}
 		try {
-			const pins = parsePinnedExtensions(JSON.parse(raw));
+			const state = JSON.parse(raw);
+			const pins = parsePinnedExtensions(state?.remotePinnedExtensions);
 			return pins ? JSON.stringify(pins) : undefined;
 		} catch {
 			return undefined;
