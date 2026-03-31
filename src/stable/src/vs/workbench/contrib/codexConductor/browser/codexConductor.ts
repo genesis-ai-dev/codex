@@ -23,21 +23,7 @@ import { IClipboardService } from '../../../../platform/clipboard/common/clipboa
 import { IProductService } from '../../../../platform/product/common/productService.js';
 import { OS, OperatingSystem } from '../../../../base/common/platform.js';
 import { timeout } from '../../../../base/common/async.js';
-
-interface PinnedExtensionEntry {
-	version: string;
-	url: string;
-}
-
-type PinnedExtensions = Record<string, PinnedExtensionEntry>;
-type RequiredExtensions = Record<string, string>;
-
-interface ProjectMetadata {
-	meta?: {
-		pinnedExtensions?: PinnedExtensions;
-		requiredExtensions?: RequiredExtensions;
-	};
-}
+import { PinnedExtensions, RequiredExtensions, ProjectMetadata, parsePinnedExtensions } from './codexTypes.js';
 
 /** Maps profile name → array of project folder URIs that reference it. */
 type ProfileAssociations = Record<string, string[]>;
@@ -160,7 +146,9 @@ export class CodexConductorContribution extends Disposable implements IWorkbench
 		// New or changed pins — need to prepare the profile before reloading.
 		let pins: PinnedExtensions;
 		try {
-			pins = JSON.parse(currentSnapshot);
+			const parsed = parsePinnedExtensions(JSON.parse(currentSnapshot));
+			if (!parsed) { return; }
+			pins = parsed;
 		} catch {
 			return;
 		}
@@ -303,8 +291,8 @@ export class CodexConductorContribution extends Disposable implements IWorkbench
 		try {
 			const content = await this.fileService.readFile(this.metadataUri);
 			const metadata = JSON.parse(content.value.toString());
-			const pins = metadata?.meta?.pinnedExtensions;
-			return pins && Object.keys(pins).length > 0 ? JSON.stringify(pins) : undefined;
+			const pins = parsePinnedExtensions(metadata?.meta?.pinnedExtensions);
+			return pins ? JSON.stringify(pins) : undefined;
 		} catch {
 			return undefined;
 		}
@@ -322,16 +310,12 @@ export class CodexConductorContribution extends Disposable implements IWorkbench
 		if (!raw) {
 			return undefined;
 		}
-		// Validate it parses and has entries
 		try {
-			const pins = JSON.parse(raw);
-			if (pins && typeof pins === 'object' && Object.keys(pins).length > 0) {
-				return raw;
-			}
+			const pins = parsePinnedExtensions(JSON.parse(raw));
+			return pins ? JSON.stringify(pins) : undefined;
 		} catch {
-			// Malformed — ignore
+			return undefined;
 		}
-		return undefined;
 	}
 
 	private async logStartupExtensionState(): Promise<void> {
@@ -356,14 +340,14 @@ export class CodexConductorContribution extends Disposable implements IWorkbench
 		const storagePins = this.readPinsFromStorage();
 		if (storagePins) {
 			try {
-				return JSON.parse(storagePins);
+				return parsePinnedExtensions(JSON.parse(storagePins)) || {};
 			} catch {
 				// Ignore malformed storage data and fall back to metadata.json.
 			}
 		}
 
 		const metadata = await this.readProjectMetadata();
-		return metadata?.meta?.pinnedExtensions || {};
+		return parsePinnedExtensions(metadata?.meta?.pinnedExtensions) || {};
 	}
 
 	private async readProjectMetadata(): Promise<ProjectMetadata | undefined> {
@@ -396,18 +380,18 @@ export class CodexConductorContribution extends Disposable implements IWorkbench
 		// Read pins from storage first (remotePinnedExtensions written by Frontier),
 		// then fall back to metadata.json on disk. Storage has the latest pins from
 		// origin even if sync aborted before merging metadata.json to disk.
-		let pins: PinnedExtensions = {};
+		let pins: PinnedExtensions | undefined;
 
 		const storagePins = this.readPinsFromStorage();
 		if (storagePins) {
 			try {
-				pins = JSON.parse(storagePins);
+				pins = parsePinnedExtensions(JSON.parse(storagePins));
 			} catch {
 				this.logService.warn('[CodexConductor] Malformed remotePinnedExtensions in storage');
 			}
 		}
 
-		if (Object.keys(pins).length === 0) {
+		if (!pins) {
 			// No pins in storage — try metadata.json on disk
 			try {
 				const content = await this.fileService.readFile(this.metadataUri);
@@ -416,16 +400,15 @@ export class CodexConductorContribution extends Disposable implements IWorkbench
 					metadata = JSON.parse(content.value.toString());
 				} catch (parseError) {
 					this.logService.warn('[CodexConductor] metadata.json contains invalid JSON — extension pinning disabled');
-					// metadata stays undefined — falls through to "no pins" handling below
 				}
-				pins = (metadata as { meta?: { pinnedExtensions?: PinnedExtensions } })?.meta?.pinnedExtensions || {};
+				pins = parsePinnedExtensions((metadata as { meta?: { pinnedExtensions?: unknown } })?.meta?.pinnedExtensions);
 			} catch (e) {
 				// No metadata.json — not a Codex project, nothing to enforce
 				this.logService.trace('[CodexConductor] No metadata.json found — skipping enforcement');
 			}
 		}
 
-		if (Object.keys(pins).length === 0) {
+		if (!pins) {
 			// No active pins — remove this project from any profile associations
 			this.removeCurrentProjectFromAssociations();
 			await this.revertIfPatchBuild();
@@ -605,9 +588,9 @@ export class CodexConductorContribution extends Disposable implements IWorkbench
 				const metadataUri = joinPath(URI.parse(projectPath), 'metadata.json');
 				const content = await this.fileService.readFile(metadataUri);
 				const metadata = JSON.parse(content.value.toString());
-				const pins: PinnedExtensions = metadata?.meta?.pinnedExtensions || {};
+				const pins = parsePinnedExtensions(metadata?.meta?.pinnedExtensions);
 
-				if (Object.keys(pins).length > 0 && this.resolveProfileName(pins) === profileName) {
+				if (pins && this.resolveProfileName(pins) === profileName) {
 					return true;
 				}
 			} catch {

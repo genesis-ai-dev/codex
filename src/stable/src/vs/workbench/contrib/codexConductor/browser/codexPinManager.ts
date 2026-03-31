@@ -21,22 +21,7 @@ import { joinPath } from '../../../../base/common/resources.js';
 import { VSBuffer } from '../../../../base/common/buffer.js';
 import { CancellationToken } from '../../../../base/common/cancellation.js';
 import { DisposableStore } from '../../../../base/common/lifecycle.js';
-
-interface PinnedExtensionEntry {
-	version: string;
-	url: string;
-}
-
-type PinnedExtensions = Record<string, PinnedExtensionEntry>;
-type RequiredExtensions = Record<string, string>;
-
-interface ProjectMetadata {
-	meta?: {
-		pinnedExtensions?: PinnedExtensions;
-		requiredExtensions?: RequiredExtensions;
-	};
-	[key: string]: unknown;
-}
+import { ProjectMetadata } from './codexTypes.js';
 
 interface GitHubRelease {
 	assets?: Array<{
