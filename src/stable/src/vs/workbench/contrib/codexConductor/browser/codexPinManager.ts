@@ -206,15 +206,21 @@ function showHub(quickInputService: IQuickInputService, metadata: ProjectMetadat
 
 		// Required Extensions section
 		const required = metadata.meta?.requiredExtensions;
-		if (required && Object.keys(required).length > 0) {
-			items.push({ type: 'separator', label: localize('managePins.required', 'Required Extensions') });
-			const sortedIds = Object.keys(required).sort();
-			for (const id of sortedIds) {
-				items.push({
-					label: `$(lock) ${id}`,
-					description: required[id],
-					action: 'info',
-				});
+		if (required) {
+			const entries: [string, string][] = [];
+			if (required.codexEditor) { entries.push(['codexEditor', required.codexEditor]); }
+			if (required.frontierAuthentication) { entries.push(['frontierAuthentication', required.frontierAuthentication]); }
+
+			if (entries.length > 0) {
+				items.push({ type: 'separator', label: localize('managePins.required', 'Required Extensions') });
+				entries.sort(([a], [b]) => a.localeCompare(b));
+				for (const [id, version] of entries) {
+					items.push({
+						label: `$(lock) ${id}`,
+						description: version,
+						action: 'info',
+					});
+				}
 			}
 		}
 

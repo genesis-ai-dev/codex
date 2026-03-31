@@ -9,7 +9,10 @@ export interface PinnedExtensionEntry {
 }
 
 export type PinnedExtensions = Record<string, PinnedExtensionEntry>;
-export type RequiredExtensions = Record<string, string>;
+export interface RequiredExtensions {
+	codexEditor?: string;
+	frontierAuthentication?: string;
+}
 
 export interface ProjectMetadata {
 	meta?: {
