@@ -150,10 +150,10 @@ registerAction2(class ManageExtensionPinsAction extends Action2 {
 
 			switch (action.action) {
 				case 'add':
-					await addPin(ctx);
+					await addPin(ctx, commandService);
 					break;
 				case 'remove':
-					await removePin(ctx, metadata);
+					await removePin(ctx, metadata, commandService);
 					break;
 				case 'sync':
 					await syncChanges(commandService, ctx.notificationService, ctx.logService);
@@ -271,7 +271,19 @@ function showHub(quickInputService: IQuickInputService, metadata: ProjectMetadat
 	});
 }
 
-async function addPin(ctx: PinManagerContext): Promise<void> {
+async function updateAdminIntent(commandService: ICommandService, pins: Record<string, { version: string; url: string }> | undefined, logService: ILogService): Promise<void> {
+	try {
+		if (pins && Object.keys(pins).length > 0) {
+			await commandService.executeCommand('frontier.setAdminPinIntent', pins);
+		} else {
+			await commandService.executeCommand('frontier.clearAdminPinIntent');
+		}
+	} catch (e: unknown) {
+		logService.warn(`[CodexPinManager] Failed to update admin pin intent: ${e}`);
+	}
+}
+
+async function addPin(ctx: PinManagerContext, commandService: ICommandService): Promise<void> {
 	// Step 1: Get URL from user
 	const url = await ctx.quickInputService.input({
 		title: localize('managePins.addTitle', 'Pin an Extension'),
@@ -326,11 +338,14 @@ async function addPin(ctx: PinManagerContext): Promise<void> {
 		return;
 	}
 
-	// Step 4: Write to metadata.json
+	// Step 4: Write to metadata.json and signal intent
 	try {
+		let updatedPins: Record<string, { version: string; url: string }> | undefined;
 		await writeMetadata(ctx, (m) => {
 			m.meta!.pinnedExtensions![extensionId] = { version, url: resolvedUrl };
+			updatedPins = m.meta!.pinnedExtensions;
 		});
+		await updateAdminIntent(commandService, updatedPins, ctx.logService);
 		ctx.logService.info(`[CodexPinManager] Pinned ${extensionId} to v${version}`);
 		ctx.notificationService.info(localize('managePins.pinned', 'Pinned {0} to v{1}.', extensionId, version));
 	} catch (e: unknown) {
@@ -339,7 +354,7 @@ async function addPin(ctx: PinManagerContext): Promise<void> {
 	}
 }
 
-async function removePin(ctx: PinManagerContext, metadata: ProjectMetadata): Promise<void> {
+async function removePin(ctx: PinManagerContext, metadata: ProjectMetadata, commandService: ICommandService): Promise<void> {
 	const pinned = metadata.meta?.pinnedExtensions;
 	if (!pinned || Object.keys(pinned).length === 0) {
 		ctx.notificationService.info(localize('managePins.noPins', 'No pinned extensions to remove.'));
@@ -374,11 +389,14 @@ async function removePin(ctx: PinManagerContext, metadata: ProjectMetadata): Pro
 		return;
 	}
 
-	// Step 3: Update metadata.json
+	// Step 3: Update metadata.json and signal intent
 	try {
+		let updatedPins: Record<string, { version: string; url: string }> | undefined;
 		await writeMetadata(ctx, (m) => {
 			delete m.meta!.pinnedExtensions![extensionId];
+			updatedPins = m.meta!.pinnedExtensions;
 		});
+		await updateAdminIntent(commandService, updatedPins, ctx.logService);
 		ctx.logService.info(`[CodexPinManager] Removed pin for ${extensionId}`);
 		ctx.notificationService.info(localize('managePins.removed', 'Removed pin for {0}.', extensionId));
 	} catch (e: unknown) {

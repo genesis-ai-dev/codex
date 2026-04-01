@@ -272,54 +272,12 @@ export class CodexConductorContribution extends Disposable implements IWorkbench
 	}
 
 	/**
-	 * Reads pinnedExtensions from storage (remotePinnedExtensions written by
-	 * Frontier) first, then falls back to metadata.json on disk. Returns a
-	 * stable JSON string for snapshot comparison, or undefined if no pins found.
+	 * Returns a stable JSON snapshot of currently active pins from the prioritized
+	 * source (local metadata.json or remote storage).
 	 */
 	private async readPinsSnapshot(): Promise<string | undefined> {
-		// Storage first — this has the latest pins from origin even if sync
-		// aborted before merging metadata.json to disk.
-		const storagePins = this.readPinsFromStorage();
-		if (storagePins) {
-			return storagePins;
-		}
-
-		// Fall back to metadata.json on disk
-		if (!this.metadataUri) {
-			return undefined;
-		}
-		try {
-			const content = await this.fileService.readFile(this.metadataUri);
-			const metadata = JSON.parse(content.value.toString());
-			const pins = parsePinnedExtensions(metadata?.meta?.pinnedExtensions);
-			return pins ? JSON.stringify(pins) : undefined;
-		} catch {
-			return undefined;
-		}
-	}
-
-	/**
-	 * Reads remotePinnedExtensions from Frontier's workspaceState via
-	 * IStorageService. VS Code stores an extension's entire workspaceState
-	 * as a single JSON blob under the extension ID key, so we read that
-	 * blob and extract the `remotePinnedExtensions` field from within it.
-	 * Returns a stable JSON string or undefined.
-	 */
-	private readPinsFromStorage(): string | undefined {
-		const raw = this.storageService.get(
-			FRONTIER_EXTENSION_ID,
-			StorageScope.WORKSPACE
-		);
-		if (!raw) {
-			return undefined;
-		}
-		try {
-			const state = JSON.parse(raw);
-			const pins = parsePinnedExtensions(state?.remotePinnedExtensions);
-			return pins ? JSON.stringify(pins) : undefined;
-		} catch {
-			return undefined;
-		}
+		const pins = await this.readEffectivePinsInternal();
+		return pins ? JSON.stringify(pins) : undefined;
 	}
 
 	private async logStartupExtensionState(): Promise<void> {
@@ -335,25 +293,9 @@ export class CodexConductorContribution extends Disposable implements IWorkbench
 		);
 	}
 
-	private async readRequiredExtensionsFromMetadata(): Promise<RequiredExtensions> {
-		const metadata = await this.readProjectMetadata();
-		return metadata?.meta?.requiredExtensions || {};
-	}
-
-	private async readEffectivePinnedExtensions(): Promise<PinnedExtensions> {
-		const storagePins = this.readPinsFromStorage();
-		if (storagePins) {
-			try {
-				return parsePinnedExtensions(JSON.parse(storagePins)) || {};
-			} catch {
-				// Ignore malformed storage data and fall back to metadata.json.
-			}
-		}
-
-		const metadata = await this.readProjectMetadata();
-		return parsePinnedExtensions(metadata?.meta?.pinnedExtensions) || {};
-	}
-
+	/**
+	 * Reads project metadata from metadata.json on disk.
+	 */
 	private async readProjectMetadata(): Promise<ProjectMetadata | undefined> {
 		if (!this.metadataUri) {
 			return undefined;
@@ -361,10 +303,74 @@ export class CodexConductorContribution extends Disposable implements IWorkbench
 
 		try {
 			const content = await this.fileService.readFile(this.metadataUri);
-			return JSON.parse(content.value.toString()) as ProjectMetadata;
+			try {
+				return JSON.parse(content.value.toString()) as ProjectMetadata;
+			} catch (parseError) {
+				this.logService.warn('[CodexConductor] metadata.json contains invalid JSON — extension pinning disabled');
+				return undefined;
+			}
 		} catch {
 			return undefined;
 		}
+	}
+
+	/**
+	 * Reads the effective pinned extensions by considering:
+	 * 1. Admin Intent (adminPinnedExtensions in storage) - Absolute precedence.
+	 * 2. Remote Pins (remotePinnedExtensions in storage) - Authoritative for users.
+	 * 3. Local Pins (metadata.json on disk) - Fallback.
+	 */
+	private async readEffectivePinsInternal(): Promise<PinnedExtensions | undefined> {
+		const rawStorage = this.storageService.get(FRONTIER_EXTENSION_ID, StorageScope.WORKSPACE);
+		if (rawStorage) {
+			try {
+				const state = JSON.parse(rawStorage);
+
+				// 1. Check Admin Intent (highest precedence)
+				const adminIntent = parsePinnedExtensions(state?.adminPinnedExtensions);
+				if (adminIntent) {
+					// We only honor the intent if it matches what's currently running.
+					// This prevents "intent leakage" if the admin manually changes
+					// extensions without using the conductor.
+					const installed = await this.extensionManagementService.getInstalled();
+					let matchesRunning = true;
+					for (const [id, pin] of Object.entries(adminIntent)) {
+						const ext = installed.find(e => e.identifier.id.toLowerCase() === id.toLowerCase());
+						if (!ext || ext.manifest.version !== pin.version) {
+							matchesRunning = false;
+							break;
+						}
+					}
+
+					if (matchesRunning) {
+						this.logService.trace('[CodexConductor] Admin intent active and matches running version — prioritizing.');
+						return adminIntent;
+					}
+				}
+
+				// 2. Check Remote Pins (authoritative for users)
+				const remotePins = parsePinnedExtensions(state?.remotePinnedExtensions);
+				if (remotePins) {
+					this.logService.trace('[CodexConductor] Remote pins found in storage — prioritizing over metadata.json');
+					return remotePins;
+				}
+			} catch {
+				this.logService.warn('[CodexConductor] Malformed workspace state in storage');
+			}
+		}
+
+		// 3. Fall back to metadata.json on disk
+		const metadata = await this.readProjectMetadata();
+		return parsePinnedExtensions(metadata?.meta?.pinnedExtensions);
+	}
+
+	private async readRequiredExtensionsFromMetadata(): Promise<RequiredExtensions> {
+		const metadata = await this.readProjectMetadata();
+		return metadata?.meta?.requiredExtensions || {};
+	}
+
+	private async readEffectivePinnedExtensions(): Promise<PinnedExtensions> {
+		return (await this.readEffectivePinsInternal()) || {};
 	}
 
 	private formatObjectForLog<T extends object>(value: T): string {
@@ -380,37 +386,7 @@ export class CodexConductorContribution extends Disposable implements IWorkbench
 		}
 
 		const workspaceFolder = this.workspaceContextService.getWorkspace().folders[0];
-
-		// Read pins from storage first (remotePinnedExtensions written by Frontier),
-		// then fall back to metadata.json on disk. Storage has the latest pins from
-		// origin even if sync aborted before merging metadata.json to disk.
-		let pins: PinnedExtensions | undefined;
-
-		const storagePins = this.readPinsFromStorage();
-		if (storagePins) {
-			try {
-				pins = parsePinnedExtensions(JSON.parse(storagePins));
-			} catch {
-				this.logService.warn('[CodexConductor] Malformed remotePinnedExtensions in storage');
-			}
-		}
-
-		if (!pins) {
-			// No pins in storage — try metadata.json on disk
-			try {
-				const content = await this.fileService.readFile(this.metadataUri);
-				let metadata: unknown;
-				try {
-					metadata = JSON.parse(content.value.toString());
-				} catch (parseError) {
-					this.logService.warn('[CodexConductor] metadata.json contains invalid JSON — extension pinning disabled');
-				}
-				pins = parsePinnedExtensions((metadata as { meta?: { pinnedExtensions?: unknown } })?.meta?.pinnedExtensions);
-			} catch (e) {
-				// No metadata.json — not a Codex project, nothing to enforce
-				this.logService.trace('[CodexConductor] No metadata.json found — skipping enforcement');
-			}
-		}
+		const pins = await this.readEffectivePinsInternal();
 
 		if (!pins) {
 			// No active pins — remove this project from any profile associations
