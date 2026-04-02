@@ -29,6 +29,11 @@ install_vsix() {
 
 count=$(jq -r '.bundle | length' "${BUNDLE_JSON}")
 
+if [[ "${count}" -eq 0 ]]; then
+    echo "[get-extensions] No bundled extensions to download."
+    return 0
+fi
+
 for i in $(seq 0 $((count - 1))); do
     name=$(jq -r ".bundle[$i].name" "${BUNDLE_JSON}")
     repo=$(jq -r ".bundle[$i].github_release" "${BUNDLE_JSON}")
