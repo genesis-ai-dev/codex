@@ -598,5 +598,11 @@
     "gruntfuggly.todo-tree": {
       "default": false
     }
-  }
+  },
+  "codexSideloadExtensions": [
+    "project-accelerate.codex-editor-extension",
+    "project-accelerate.shared-state-store",
+    "project-accelerate.vscode-edit-table",
+    "frontier-rnd.frontier-authentication"
+  ]
 }
