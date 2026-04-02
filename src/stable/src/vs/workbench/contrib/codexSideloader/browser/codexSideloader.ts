@@ -10,10 +10,36 @@ import { IExtensionGalleryService } from '../../../../platform/extensionManageme
 import { IProductService } from '../../../../platform/product/common/productService.js';
 import { ILogService } from '../../../../platform/log/common/log.js';
 import { INotificationService, Severity } from '../../../../platform/notification/common/notification.js';
+import { ISharedProcessService } from '../../../../platform/ipc/electron-browser/services.js';
 import { CancellationToken } from '../../../../base/common/cancellation.js';
 import { ExtensionType } from '../../../../platform/extensions/common/extensions.js';
+import { URI } from '../../../../base/common/uri.js';
 
 const TAG = '[CodexSideloader]';
+
+/** A string means "install from gallery by ID". An object with `vsix` means "install directly from URL". */
+interface SideloadVsixEntry {
+	id: string;
+	vsix: string;
+}
+
+type SideloadEntry = string | SideloadVsixEntry;
+
+function parseSideloadEntries(raw: unknown[]): SideloadEntry[] {
+	const entries: SideloadEntry[] = [];
+	for (const item of raw) {
+		if (typeof item === 'string') {
+			entries.push(item);
+		} else if (
+			item && typeof item === 'object' &&
+			typeof (item as Record<string, unknown>).id === 'string' &&
+			typeof (item as Record<string, unknown>).vsix === 'string'
+		) {
+			entries.push(item as SideloadVsixEntry);
+		}
+	}
+	return entries;
+}
 
 export class CodexSideloaderContribution extends Disposable implements IWorkbenchContribution {
 
@@ -25,6 +51,7 @@ export class CodexSideloaderContribution extends Disposable implements IWorkbenc
 		@IProductService private readonly productService: IProductService,
 		@ILogService private readonly logService: ILogService,
 		@INotificationService private readonly notificationService: INotificationService,
+		@ISharedProcessService private readonly sharedProcessService: ISharedProcessService,
 	) {
 		super();
 
@@ -34,44 +61,66 @@ export class CodexSideloaderContribution extends Disposable implements IWorkbenc
 			return;
 		}
 
-		const extensionIds: string[] = configured.filter((id): id is string => typeof id === 'string');
-		if (extensionIds.length === 0) {
+		const entries = parseSideloadEntries(configured);
+		if (entries.length === 0) {
 			return;
 		}
 
-		this.ensureExtensions(extensionIds).catch(err => {
+		this.ensureExtensions(entries).catch(err => {
 			this.logService.error(`${TAG} Unhandled error during sideload`, err);
 		});
 	}
 
-	private async ensureExtensions(extensionIds: string[]): Promise<void> {
-		// Determine which extensions are already installed
+	private async ensureExtensions(entries: SideloadEntry[]): Promise<void> {
 		const installed = await this.extensionManagementService.getInstalled(ExtensionType.User);
 		const installedIds = new Set(installed.map(e => e.identifier.id.toLowerCase()));
 
-		const missing = extensionIds.filter(id => !installedIds.has(id.toLowerCase()));
-		if (missing.length === 0) {
+		const missingGallery: string[] = [];
+		const missingVsix: SideloadVsixEntry[] = [];
+
+		for (const entry of entries) {
+			const id = typeof entry === 'string' ? entry : entry.id;
+			if (installedIds.has(id.toLowerCase())) {
+				continue;
+			}
+			if (typeof entry === 'string') {
+				missingGallery.push(entry);
+			} else {
+				missingVsix.push(entry);
+			}
+		}
+
+		if (missingGallery.length === 0 && missingVsix.length === 0) {
 			this.logService.info(`${TAG} All sideload extensions already installed`);
 			return;
 		}
 
-		this.logService.info(`${TAG} Installing ${missing.length} missing extension(s): ${missing.join(', ')}`);
+		await Promise.all([
+			this.installFromGallery(missingGallery),
+			this.installFromVsix(missingVsix),
+		]);
+	}
 
-		// Check if gallery service is available
-		if (!this.extensionGalleryService.isEnabled()) {
-			this.logService.warn(`${TAG} Extension gallery is not available — skipping sideload`);
+	private async installFromGallery(ids: string[]): Promise<void> {
+		if (ids.length === 0) {
 			return;
 		}
 
-		// Resolve extension IDs to gallery entries
+		this.logService.info(`${TAG} Installing ${ids.length} extension(s) from gallery: ${ids.join(', ')}`);
+
+		if (!this.extensionGalleryService.isEnabled()) {
+			this.logService.warn(`${TAG} Extension gallery is not available — skipping gallery installs`);
+			return;
+		}
+
 		const galleryExtensions = await this.extensionGalleryService.getExtensions(
-			missing.map(id => ({ id })),
+			ids.map(id => ({ id })),
 			CancellationToken.None
 		);
 
 		const resolved = new Map(galleryExtensions.map(ext => [ext.identifier.id.toLowerCase(), ext]));
 
-		for (const id of missing) {
+		for (const id of ids) {
 			const galleryExt = resolved.get(id.toLowerCase());
 			if (!galleryExt) {
 				this.logService.warn(`${TAG} Extension "${id}" not found in gallery — skipping`);
@@ -86,6 +135,34 @@ export class CodexSideloaderContribution extends Disposable implements IWorkbenc
 				this.notificationService.notify({
 					severity: Severity.Warning,
 					message: `Codex: Failed to install extension "${id}". It may be installed manually from the Extensions view.`,
+				});
+			}
+		}
+	}
+
+	private async installFromVsix(entries: SideloadVsixEntry[]): Promise<void> {
+		if (entries.length === 0) {
+			return;
+		}
+
+		this.logService.info(`${TAG} Installing ${entries.length} extension(s) from VSIX: ${entries.map(e => e.id).join(', ')}`);
+
+		// Use the shared process 'extensions' IPC channel to download via
+		// Node.js networking, bypassing renderer CORS restrictions on redirects.
+		const channel = this.sharedProcessService.getChannel('extensions');
+
+		for (const entry of entries) {
+			try {
+				await channel.call('install', [URI.parse(entry.vsix), {
+					installGivenVersion: true,
+					pinned: true,
+				}]);
+				this.logService.info(`${TAG} Installed "${entry.id}" from VSIX ${entry.vsix}`);
+			} catch (err) {
+				this.logService.error(`${TAG} Failed to install "${entry.id}" from VSIX ${entry.vsix}`, err);
+				this.notificationService.notify({
+					severity: Severity.Warning,
+					message: `Codex: Failed to install extension "${entry.id}" from VSIX. It may be installed manually from the Extensions view.`,
 				});
 			}
 		}
