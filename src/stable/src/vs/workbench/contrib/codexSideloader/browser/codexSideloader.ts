@@ -55,7 +55,7 @@ export class CodexSideloaderContribution extends Disposable implements IWorkbenc
 	) {
 		super();
 
-		const configured = (this.productService as Record<string, unknown>)['codexSideloadExtensions'];
+		const configured = (this.productService as unknown as Record<string, unknown>)['codexSideloadExtensions'];
 		if (!Array.isArray(configured) || configured.length === 0) {
 			this.logService.info(`${TAG} No sideload extensions configured in product.json`);
 			return;
