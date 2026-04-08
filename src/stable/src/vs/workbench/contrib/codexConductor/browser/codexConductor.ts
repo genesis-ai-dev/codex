@@ -70,6 +70,7 @@ export class CodexConductorContribution extends Disposable implements IWorkbench
 		super();
 
 		this._register(CommandsRegistry.registerCommand('codex.conductor.cleanupProfiles', () => this.runProfileCleanup()));
+		this._register(CommandsRegistry.registerCommand('codex.conductor.getEffectivePinnedExtensions', () => this.readEffectivePinsInternal()));
 		this._register(this.workspaceContextService.onDidChangeWorkbenchState(() => this.initialize()));
 
 		this.initialize();
