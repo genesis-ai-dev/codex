@@ -1,6 +1,6 @@
 === PATCH REBUILD ===
-**Build Version:** 1.108.12372
+**Build Version:** 1.108.12374
 **Base VS Code:** 1.108.1
-**Rebuild Reason:** Remove some menu items from menus
-**Build Date:** Wed Apr  8 20:15:45 UTC 2026
-**Commit:** 9aaf10682613318836f7f4ccd602a1c4a41c2e4c
+**Rebuild Reason:** Revert menu item removal
+**Build Date:** Wed Apr  8 22:01:29 UTC 2026
+**Commit:** 0f8536c30ad55ec281c56bfaaf9e1659f4233831
