@@ -600,9 +600,9 @@
     }
   },
   "codexSideloadExtensions": [
-    { "id": "project-accelerate.codex-editor-extension", "vsix": "https://github.com/genesis-ai-dev/codex-editor/releases/download/0.24.0-pr829-96919c1a/codex-editor-extension-0.24.0-pr829-96919c1a.vsix" },
+    { "id": "project-accelerate.codex-editor-extension", "vsix": "https://github.com/genesis-ai-dev/codex-editor/releases/download/0.24.0-pr829-0b1c8f67/codex-editor-extension-0.24.0-pr829-0b1c8f67.vsix" },
     "project-accelerate.shared-state-store",
     "project-accelerate.vscode-edit-table",
-    { "id": "frontier-rnd.frontier-authentication", "vsix": "https://github.com/genesis-ai-dev/frontier-authentication/releases/download/0.4.24-pr23-7b219f0/frontier-authentication-0.4.24-pr23-7b219f0.vsix" }
+    { "id": "frontier-rnd.frontier-authentication", "vsix": "https://github.com/genesis-ai-dev/frontier-authentication/releases/download/0.4.24-pr23-7669513/frontier-authentication-0.4.24-pr23-7669513.vsix" }
   ]
 }
