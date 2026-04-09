@@ -1,32 +1,45 @@
 #!/usr/bin/env bash
+# Downloads and unpacks bundled extensions into ./extensions/.
+# Sourced from build.sh while CWD is vscode/.
 
-# Exit early if SKIP_EXTENSIONS is set
-if [[ -n "$SKIP_EXTENSIONS" ]]; then
+set -euo pipefail
+
+if [[ -n "${SKIP_EXTENSIONS:-}" ]]; then
     return 0
 fi
 
-jsonfile=$(curl -s https://raw.githubusercontent.com/genesis-ai-dev/extension-sideloader/refs/heads/main/extensions.json)
-extensions_dir=./.build/extensions
-base_dir=$(pwd)
+BUNDLE_JSON="../bundle-extensions.json"
+EXTENSIONS_DIR="./extensions"
 
-count=$(jq -r '.builtin | length' <<< ${jsonfile})
-for i in $(seq $count); do
-  url=$( jq -r ".builtin[$i-1].url" <<< ${jsonfile})
-  name=$( jq -r ".builtin[$i-1].name"  <<< ${jsonfile})
-  echo $name $url
-  if [[ -d ${extensions_dir}/"$name" ]]; then
-    rm -rf ${extensions_dir}/"$name"
-  fi
-  mkdir -p ${extensions_dir}/"$name"
-  curl -Lso "$name".zip "$url"
-  unzip -q "$name".zip -d ${extensions_dir}/"$name"
-  mv ${extensions_dir}/"$name"/extension/* ${extensions_dir}/"$name"/
-  cp -r ${extensions_dir}/"$name" ./extensions/
-  rm "$name".zip
+TMP_DIR=$(mktemp -d)
+trap 'rm -rf "${TMP_DIR}"' EXIT
+
+install_vsix() {
+    local name="$1"
+    local zip_file="$2"
+    local dest="${EXTENSIONS_DIR}/${name}"
+
+    echo "[get-extensions] Installing ${name}..."
+    mkdir -p "${TMP_DIR}/${name}"
+    unzip -q "${zip_file}" -d "${TMP_DIR}/${name}"
+    rm -rf "${dest}"
+    mv "${TMP_DIR}/${name}/extension" "${dest}"
+    echo "[get-extensions] Installed ${name}"
+}
+
+count=$(jq -r '.bundle | length' "${BUNDLE_JSON}")
+
+for i in $(seq 0 $((count - 1))); do
+    name=$(jq -r ".bundle[$i].name" "${BUNDLE_JSON}")
+    repo=$(jq -r ".bundle[$i].github_release" "${BUNDLE_JSON}")
+    tag=$(jq -r ".bundle[$i].tag" "${BUNDLE_JSON}")
+    zip_file="${TMP_DIR}/${name}.vsix"
+
+    echo "[get-extensions] Downloading ${name} from ${repo}@${tag}..."
+    gh release download "${tag}" \
+        --repo "${repo}" \
+        --pattern "*.vsix" \
+        --output "${zip_file}"
+
+    install_vsix "${name}" "${zip_file}"
 done
-
-# name="test"
-# cp -r /Users/andrew.denhertog/Documents/Projects/andrewhertog/test-extension/test-extension-0.0.1.vsix ./ext.zip
-# unzip -q ext.zip -d ${extensions_dir}/"$name"
-# mv ${extensions_dir}/"$name"/extension/* ${extensions_dir}/"$name"/
-# rm ext.zip
