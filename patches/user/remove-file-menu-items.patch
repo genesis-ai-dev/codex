@@ -174,7 +174,7 @@ index 96861a6..141cfe3 100644
 +	when: ContextKeyExpr.and(EnterMultiRootWorkspaceSupportContext, IsDevelopmentContext)
  });
 diff --git a/src/vs/workbench/browser/actions/workspaceCommands.ts b/src/vs/workbench/browser/actions/workspaceCommands.ts
-index f483cdb..5334b21 100644
+index f483cdb..3595aec 100644
 --- a/src/vs/workbench/browser/actions/workspaceCommands.ts
 +++ b/src/vs/workbench/browser/actions/workspaceCommands.ts
 @@ -26,2 +26,3 @@ import { IPathService } from '../../services/path/common/pathService.js';
@@ -260,7 +260,7 @@ index f483cdb..5334b21 100644
 @@ -168,2 +214,7 @@ CommandsRegistry.registerCommand({
  	handler: (accessor: ServicesAccessor, uriComponents?: UriComponents, arg?: boolean | IOpenFolderAPICommandOptions) => {
 +		const environmentService = accessor.get(IEnvironmentService);
-+		if (environmentService.isBuilt) {
++		if (environmentService.isBuilt && !uriComponents) {
 +			return;
 +		}
 +
@@ -357,7 +357,7 @@ index 0a50789..156d528 100644
 +
  		const filesConfigurationService = accessor.get(IFilesConfigurationService);
 diff --git a/src/vs/workbench/contrib/files/browser/fileCommands.ts b/src/vs/workbench/contrib/files/browser/fileCommands.ts
-index c8fc8aa..530e336 100644
+index c8fc8aa..3214b6e 100644
 --- a/src/vs/workbench/contrib/files/browser/fileCommands.ts
 +++ b/src/vs/workbench/contrib/files/browser/fileCommands.ts
 @@ -54,7 +54,12 @@ import { ExplorerView } from './views/explorerView.js';
@@ -366,7 +366,7 @@ index c8fc8aa..530e336 100644
  
  export const openWindowCommand = (accessor: ServicesAccessor, toOpen: IWindowOpenable[], options?: IOpenWindowOptions) => {
 +	const environmentService = accessor.get(IEnvironmentService);
-+	if (environmentService.isBuilt) {
++	if (environmentService.isBuilt && (!Array.isArray(toOpen) || toOpen.length === 0)) {
 +		return;
 +	}
 +
