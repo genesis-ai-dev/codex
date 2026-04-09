@@ -1,6 +1,6 @@
 === PATCH REBUILD ===
-**Build Version:** 1.108.11148
+**Build Version:** 1.108.12374
 **Base VS Code:** 1.108.1
-**Rebuild Reason:** Add windows codesigning
-**Build Date:** Mon Feb 16 20:18:27 UTC 2026
-**Commit:** 3da950e862488d84c6af2c1b358c0a0afef30e42
+**Rebuild Reason:** Revert menu item removal
+**Build Date:** Wed Apr  8 22:01:29 UTC 2026
+**Commit:** 0f8536c30ad55ec281c56bfaaf9e1659f4233831
