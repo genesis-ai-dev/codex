@@ -21,6 +21,7 @@ const TAG = '[CodexSideloader]';
 interface SideloadVsixEntry {
 	id: string;
 	vsix: string;
+	version: string;
 }
 
 type SideloadEntry = string | SideloadVsixEntry;
@@ -33,7 +34,8 @@ function parseSideloadEntries(raw: unknown[]): SideloadEntry[] {
 		} else if (
 			item && typeof item === 'object' &&
 			typeof (item as Record<string, unknown>).id === 'string' &&
-			typeof (item as Record<string, unknown>).vsix === 'string'
+			typeof (item as Record<string, unknown>).vsix === 'string' &&
+			typeof (item as Record<string, unknown>).version === 'string'
 		) {
 			entries.push(item as SideloadVsixEntry);
 		}
@@ -73,20 +75,23 @@ export class CodexSideloaderContribution extends Disposable implements IWorkbenc
 
 	private async ensureExtensions(entries: SideloadEntry[]): Promise<void> {
 		const installed = await this.extensionManagementService.getInstalled(ExtensionType.User);
-		const installedIds = new Set(installed.map(e => e.identifier.id.toLowerCase()));
 
 		const missingGallery: string[] = [];
 		const missingVsix: SideloadVsixEntry[] = [];
 
 		for (const entry of entries) {
-			const id = typeof entry === 'string' ? entry : entry.id;
-			if (installedIds.has(id.toLowerCase())) {
-				continue;
-			}
 			if (typeof entry === 'string') {
-				missingGallery.push(entry);
+				// Gallery entry: skip if ID is present (any version)
+				const found = installed.some(e => e.identifier.id.toLowerCase() === entry.toLowerCase());
+				if (!found) {
+					missingGallery.push(entry);
+				}
 			} else {
-				missingVsix.push(entry);
+				// VSIX entry: skip only if ID AND version match
+				const installedExt = installed.find(e => e.identifier.id.toLowerCase() === entry.id.toLowerCase());
+				if (!installedExt || installedExt.manifest.version !== entry.version) {
+					missingVsix.push(entry);
+				}
 			}
 		}
 
