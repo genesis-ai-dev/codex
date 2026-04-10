@@ -258,14 +258,14 @@ elif [[ "${ASSETS}" != "null" ]]; then
 
         # linux-arm64
         if [[ "${VSCODE_ARCH}" == "arm64" || "${CHECK_ALL}" == "yes" ]]; then
-          if [[ -z $( contains "arm64.deb" ) ]]; then
+          if [[ -z $( contains "${APP_NAME_LC}_${RELEASE_VERSION}_arm64.deb" ) ]]; then
             echo "Building on Linux arm64 because we have no DEB"
             export SHOULD_BUILD="yes"
           else
             export SHOULD_BUILD_DEB="no"
           fi
 
-          if [[ -z $( contains "aarch64.rpm" ) ]]; then
+          if [[ -z $( contains "${APP_NAME_LC}-${RELEASE_VERSION}-el8.aarch64.rpm" ) ]]; then
             echo "Building on Linux arm64 because we have no RPM"
             export SHOULD_BUILD="yes"
           else
@@ -279,7 +279,7 @@ elif [[ "${ASSETS}" != "null" ]]; then
             export SHOULD_BUILD_TAR="no"
           fi
 
-          if [[ -z $( contains "arm64.snap" ) ]]; then
+          if [[ -z $( contains "${RELEASE_VERSION}_arm64.snap" ) ]]; then
             echo "Building on Linux arm64 because we have no SNAP"
             export SHOULD_BUILD="yes"
           else
@@ -317,14 +317,14 @@ elif [[ "${ASSETS}" != "null" ]]; then
 
         # linux-armhf
         if [[ "${VSCODE_ARCH}" == "armhf" || "${CHECK_ALL}" == "yes" ]]; then
-          if [[ -z $( contains "armhf.deb" ) ]]; then
+          if [[ -z $( contains "${APP_NAME_LC}_${RELEASE_VERSION}_armhf.deb" ) ]]; then
             echo "Building on Linux arm because we have no DEB"
             export SHOULD_BUILD="yes"
           else
             export SHOULD_BUILD_DEB="no"
           fi
 
-          if [[ -z $( contains "armv7hl.rpm" ) ]]; then
+          if [[ -z $( contains "${APP_NAME_LC}-${RELEASE_VERSION}-el8.armv7hl.rpm" ) ]]; then
             echo "Building on Linux arm because we have no RPM"
             export SHOULD_BUILD="yes"
           else
@@ -500,14 +500,14 @@ elif [[ "${ASSETS}" != "null" ]]; then
 
         # linux-x64
         if [[ "${VSCODE_ARCH}" == "x64" || "${CHECK_ALL}" == "yes" ]]; then
-          if [[ -z $( contains "amd64.deb" ) ]]; then
+          if [[ -z $( contains "${APP_NAME_LC}_${RELEASE_VERSION}_amd64.deb" ) ]]; then
             echo "Building on Linux x64 because we have no DEB"
             export SHOULD_BUILD="yes"
           else
             export SHOULD_BUILD_DEB="no"
           fi
 
-          if [[ -z $( contains "x86_64.rpm" ) ]]; then
+          if [[ -z $( contains "${APP_NAME_LC}-${RELEASE_VERSION}-el8.x86_64.rpm" ) ]]; then
             echo "Building on Linux x64 because we have no RPM"
             export SHOULD_BUILD="yes"
           else
@@ -530,7 +530,7 @@ elif [[ "${ASSETS}" != "null" ]]; then
             export SHOULD_BUILD_APPIMAGE="no"
           fi
 
-          if [[ -z $( contains "amd64.snap" ) ]]; then
+          if [[ -z $( contains "${RELEASE_VERSION}_amd64.snap" ) ]]; then
             echo "Building on Linux x64 because we have no SNAP"
             export SHOULD_BUILD="yes"
           else
