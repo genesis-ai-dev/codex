@@ -265,7 +265,7 @@ elif [[ "${ASSETS}" != "null" ]]; then
             export SHOULD_BUILD_DEB="no"
           fi
 
-          if [[ -z $( contains "${APP_NAME_LC}-${RELEASE_VERSION}-el8.aarch64.rpm" ) ]]; then
+          if [[ -z $( contains "${APP_NAME_LC}-${RELEASE_VERSION}.*aarch64.rpm" ) ]]; then
             echo "Building on Linux arm64 because we have no RPM"
             export SHOULD_BUILD="yes"
           else
@@ -324,7 +324,7 @@ elif [[ "${ASSETS}" != "null" ]]; then
             export SHOULD_BUILD_DEB="no"
           fi
 
-          if [[ -z $( contains "${APP_NAME_LC}-${RELEASE_VERSION}-el8.armv7hl.rpm" ) ]]; then
+          if [[ -z $( contains "${APP_NAME_LC}-${RELEASE_VERSION}.*armv7hl.rpm" ) ]]; then
             echo "Building on Linux arm because we have no RPM"
             export SHOULD_BUILD="yes"
           else
@@ -507,7 +507,7 @@ elif [[ "${ASSETS}" != "null" ]]; then
             export SHOULD_BUILD_DEB="no"
           fi
 
-          if [[ -z $( contains "${APP_NAME_LC}-${RELEASE_VERSION}-el8.x86_64.rpm" ) ]]; then
+          if [[ -z $( contains "${APP_NAME_LC}-${RELEASE_VERSION}.*x86_64.rpm" ) ]]; then
             echo "Building on Linux x64 because we have no RPM"
             export SHOULD_BUILD="yes"
           else
