@@ -1,0 +1,134 @@
+diff --git a/src/vs/workbench/browser/actions/windowActions.ts b/src/vs/workbench/browser/actions/windowActions.ts
+index 9e9423f..7ed4a12 100644
+--- a/src/vs/workbench/browser/actions/windowActions.ts
++++ b/src/vs/workbench/browser/actions/windowActions.ts
+@@ -518,3 +518,4 @@ MenuRegistry.appendMenuItem(MenuId.MenubarFileMenu, {
+ 	group: '2_open',
+-	order: 4
++	order: 4,
++	when: IsDevelopmentContext
+ });
+diff --git a/src/vs/workbench/browser/actions/workspaceActions.ts b/src/vs/workbench/browser/actions/workspaceActions.ts
+index 96861a6..141cfe3 100644
+--- a/src/vs/workbench/browser/actions/workspaceActions.ts
++++ b/src/vs/workbench/browser/actions/workspaceActions.ts
+@@ -22,3 +22,3 @@ import { IWorkspacesService } from '../../../platform/workspaces/common/workspac
+ import { KeybindingWeight } from '../../../platform/keybinding/common/keybindingsRegistry.js';
+-import { IsMacNativeContext } from '../../../platform/contextkey/common/contextkeys.js';
++import { IsDevelopmentContext, IsMacNativeContext } from '../../../platform/contextkey/common/contextkeys.js';
+ import { ILocalizedString } from '../../../platform/action/common/action.js';
+@@ -345,3 +345,3 @@ MenuRegistry.appendMenuItem(MenuId.MenubarFileMenu, {
+ 	order: 1,
+-	when: IsMacNativeContext.toNegated()
++	when: ContextKeyExpr.and(IsDevelopmentContext, IsMacNativeContext.toNegated())
+ });
+@@ -355,3 +355,3 @@ MenuRegistry.appendMenuItem(MenuId.MenubarFileMenu, {
+ 	order: 2,
+-	when: OpenFolderWorkspaceSupportContext
++	when: ContextKeyExpr.and(OpenFolderWorkspaceSupportContext, IsDevelopmentContext)
+ });
+@@ -365,3 +365,3 @@ MenuRegistry.appendMenuItem(MenuId.MenubarFileMenu, {
+ 	order: 2,
+-	when: ContextKeyExpr.and(OpenFolderWorkspaceSupportContext.toNegated(), WorkbenchStateContext.isEqualTo('workspace'))
++	when: ContextKeyExpr.and(IsDevelopmentContext, OpenFolderWorkspaceSupportContext.toNegated(), WorkbenchStateContext.isEqualTo('workspace'))
+ });
+@@ -375,3 +375,3 @@ MenuRegistry.appendMenuItem(MenuId.MenubarFileMenu, {
+ 	order: 1,
+-	when: ContextKeyExpr.and(IsMacNativeContext, OpenFolderWorkspaceSupportContext)
++	when: ContextKeyExpr.and(IsDevelopmentContext, IsMacNativeContext, OpenFolderWorkspaceSupportContext)
+ });
+@@ -385,3 +385,3 @@ MenuRegistry.appendMenuItem(MenuId.MenubarFileMenu, {
+ 	order: 3,
+-	when: EnterMultiRootWorkspaceSupportContext
++	when: ContextKeyExpr.and(EnterMultiRootWorkspaceSupportContext, IsDevelopmentContext)
+ });
+@@ -394,3 +394,3 @@ MenuRegistry.appendMenuItem(MenuId.MenubarFileMenu, {
+ 	},
+-	when: ContextKeyExpr.or(EnterMultiRootWorkspaceSupportContext, WorkbenchStateContext.isEqualTo('workspace')),
++	when: ContextKeyExpr.and(IsDevelopmentContext, ContextKeyExpr.or(EnterMultiRootWorkspaceSupportContext, WorkbenchStateContext.isEqualTo('workspace'))),
+ 	order: 1
+@@ -405,3 +405,3 @@ MenuRegistry.appendMenuItem(MenuId.MenubarFileMenu, {
+ 	order: 2,
+-	when: EnterMultiRootWorkspaceSupportContext
++	when: ContextKeyExpr.and(EnterMultiRootWorkspaceSupportContext, IsDevelopmentContext)
+ });
+@@ -415,3 +415,3 @@ MenuRegistry.appendMenuItem(MenuId.MenubarFileMenu, {
+ 	order: 3,
+-	when: EnterMultiRootWorkspaceSupportContext
++	when: ContextKeyExpr.and(EnterMultiRootWorkspaceSupportContext, IsDevelopmentContext)
+ });
+diff --git a/src/vs/workbench/browser/parts/editor/editor.contribution.ts b/src/vs/workbench/browser/parts/editor/editor.contribution.ts
+index 1423548..454ac2e 100644
+--- a/src/vs/workbench/browser/parts/editor/editor.contribution.ts
++++ b/src/vs/workbench/browser/parts/editor/editor.contribution.ts
+@@ -75,2 +75,3 @@ import { getFontSnippets } from '../../../../base/browser/fonts.js';
+ import { registerEditorFontConfigurations } from '../../../../editor/common/config/editorConfigurationSchema.js';
++import { IsDevelopmentContext } from '../../../../platform/contextkey/common/contextkeys.js';
+ 
+@@ -686,2 +687,3 @@ MenuRegistry.appendMenuItem(MenuId.MenubarFileMenu, {
+ 	order: 1,
++	when: IsDevelopmentContext
+ });
+diff --git a/src/vs/workbench/contrib/files/browser/fileActions.contribution.ts b/src/vs/workbench/contrib/files/browser/fileActions.contribution.ts
+index 6cd0433..471d8dd 100644
+--- a/src/vs/workbench/contrib/files/browser/fileActions.contribution.ts
++++ b/src/vs/workbench/contrib/files/browser/fileActions.contribution.ts
+@@ -23,3 +23,3 @@ import { Schemas } from '../../../../base/common/network.js';
+ import { DirtyWorkingCopiesContext, EnterMultiRootWorkspaceSupportContext, HasWebFileSystemAccess, WorkbenchStateContext, WorkspaceFolderCountContext, SidebarFocusContext, ActiveEditorCanRevertContext, ActiveEditorContext, ResourceContextKey, ActiveEditorAvailableEditorIdsContext, MultipleEditorsSelectedInGroupContext, TwoEditorsSelectedInGroupContext, SelectedEditorsInGroupFileOrUntitledResourceContextKey } from '../../../common/contextkeys.js';
+-import { IsWebContext } from '../../../../platform/contextkey/common/contextkeys.js';
++import { IsDevelopmentContext, IsWebContext } from '../../../../platform/contextkey/common/contextkeys.js';
+ import { ServicesAccessor } from '../../../../platform/instantiation/common/instantiation.js';
+@@ -683,3 +683,4 @@ MenuRegistry.appendMenuItem(MenuId.MenubarFileMenu, {
+ 	},
+-	order: 1
++	order: 1,
++	when: IsDevelopmentContext
+ });
+@@ -723,3 +724,4 @@ MenuRegistry.appendMenuItem(MenuId.MenubarFileMenu, {
+ 	},
+-	order: 1
++	order: 1,
++	when: IsDevelopmentContext
+ });
+@@ -738,3 +740,4 @@ MenuRegistry.appendMenuItem(MenuId.MenubarFileMenu, {
+ 	},
+-	order: 1
++	order: 1,
++	when: IsDevelopmentContext
+ });
+diff --git a/src/vs/workbench/contrib/files/browser/files.contribution.ts b/src/vs/workbench/contrib/files/browser/files.contribution.ts
+index 87030a8..9a5b1db 100644
+--- a/src/vs/workbench/contrib/files/browser/files.contribution.ts
++++ b/src/vs/workbench/contrib/files/browser/files.contribution.ts
+@@ -269,3 +269,3 @@ configurationRegistry.registerConfiguration({
+ 			],
+-			'default': isWeb ? AutoSaveConfiguration.AFTER_DELAY : AutoSaveConfiguration.OFF,
++			'default': AutoSaveConfiguration.AFTER_DELAY,
+ 			'markdownDescription': nls.localize({ comment: ['This is the description for a setting. Values surrounded by single quotes are not to be translated.'], key: 'autoSave' }, "Controls [auto save](https://code.visualstudio.com/docs/editor/codebasics#_save-auto-save) of editors that have unsaved changes.", AutoSaveConfiguration.OFF, AutoSaveConfiguration.AFTER_DELAY, AutoSaveConfiguration.ON_FOCUS_CHANGE, AutoSaveConfiguration.ON_WINDOW_CHANGE, AutoSaveConfiguration.AFTER_DELAY),
+diff --git a/src/vs/workbench/contrib/userDataProfile/browser/userDataProfile.ts b/src/vs/workbench/contrib/userDataProfile/browser/userDataProfile.ts
+index f8ea86c..7daafd0 100644
+--- a/src/vs/workbench/contrib/userDataProfile/browser/userDataProfile.ts
++++ b/src/vs/workbench/contrib/userDataProfile/browser/userDataProfile.ts
+@@ -36,2 +36,3 @@ import { Extensions as DndExtensions, IDragAndDropContributionRegistry, IResourc
+ import { IUriIdentityService } from '../../../../platform/uriIdentity/common/uriIdentity.js';
++import { IsDevelopmentContext } from '../../../../platform/contextkey/common/contextkeys.js';
+ 
+@@ -193,2 +194,3 @@ export class UserDataProfilesWorkbenchContribution extends Disposable implements
+ 			order: 4,
++			when: IsDevelopmentContext
+ 		});
+diff --git a/src/vs/workbench/contrib/welcomeViews/common/newFile.contribution.ts b/src/vs/workbench/contrib/welcomeViews/common/newFile.contribution.ts
+index a92f90b..293e713 100644
+--- a/src/vs/workbench/contrib/welcomeViews/common/newFile.contribution.ts
++++ b/src/vs/workbench/contrib/welcomeViews/common/newFile.contribution.ts
+@@ -19,3 +19,4 @@ import { IQuickInputService, IQuickPickItem, IQuickPickSeparator } from '../../.
+ import { Registry } from '../../../../platform/registry/common/platform.js';
++import { IsDevelopmentContext } from '../../../../platform/contextkey/common/contextkeys.js';
+ import { Extensions as WorkbenchExtensions, IWorkbenchContributionsRegistry } from '../../../common/contributions.js';
+ import { LifecyclePhase } from '../../../services/lifecycle/common/lifecycle.js';
+@@ -39,3 +40,4 @@ registerAction2(class extends Action2 {
+ 				group: '1_new',
+-				order: 2
++				order: 2,
++				when: IsDevelopmentContext
+ 			}

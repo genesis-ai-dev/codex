@@ -1,0 +1,117 @@
+diff --git a/src/vs/workbench/contrib/preferences/browser/preferences.contribution.ts b/src/vs/workbench/contrib/preferences/browser/preferences.contribution.ts
+index dc4ed6e..63ee7ae 100644
+--- a/src/vs/workbench/contrib/preferences/browser/preferences.contribution.ts
++++ b/src/vs/workbench/contrib/preferences/browser/preferences.contribution.ts
+@@ -19,3 +19,3 @@ import { ConfigurationTarget } from '../../../../platform/configuration/common/c
+ import { ContextKeyExpr } from '../../../../platform/contextkey/common/contextkey.js';
+-import { InputFocusedContext, IsMacNativeContext } from '../../../../platform/contextkey/common/contextkeys.js';
++import { InputFocusedContext, IsDevelopmentContext, IsMacNativeContext } from '../../../../platform/contextkey/common/contextkeys.js';
+ import { SyncDescriptor } from '../../../../platform/instantiation/common/descriptors.js';
+@@ -239,3 +239,4 @@ class PreferencesActionsContribution extends Disposable implements IWorkbenchCon
+ 						group: '2_configuration',
+-						order: 2
++						order: 2,
++						when: IsDevelopmentContext
+ 					}, {
+@@ -243,3 +244,4 @@ class PreferencesActionsContribution extends Disposable implements IWorkbenchCon
+ 						group: '2_configuration',
+-						order: 2
++						order: 2,
++						when: IsDevelopmentContext
+ 					}],
+@@ -479,2 +481,3 @@ class PreferencesActionsContribution extends Disposable implements IWorkbenchCon
+ 						order: 1,
++						when: IsDevelopmentContext
+ 					}
+@@ -840,3 +843,4 @@ class PreferencesActionsContribution extends Disposable implements IWorkbenchCon
+ 							group: '2_configuration',
+-							order: 4
++							order: 4,
++							when: IsDevelopmentContext
+ 						}
+@@ -857,3 +861,4 @@ class PreferencesActionsContribution extends Disposable implements IWorkbenchCon
+ 			group: '2_configuration',
+-			order: 4
++			order: 4,
++			when: IsDevelopmentContext
+ 		}));
+diff --git a/src/vs/workbench/contrib/quickaccess/browser/quickAccess.contribution.ts b/src/vs/workbench/contrib/quickaccess/browser/quickAccess.contribution.ts
+--- a/src/vs/workbench/contrib/quickaccess/browser/quickAccess.contribution.ts
++++ b/src/vs/workbench/contrib/quickaccess/browser/quickAccess.contribution.ts
+@@ -96,2 +97,3 @@ MenuRegistry.appendMenuItem(MenuId.GlobalActivity, {
+ 	},
++	when: IsDevelopmentContext,
+ 	order: 1
+diff --git a/src/vs/workbench/contrib/snippets/browser/commands/configureSnippets.ts b/src/vs/workbench/contrib/snippets/browser/commands/configureSnippets.ts
+index 29f82ca..f8c2957 100644
+--- a/src/vs/workbench/contrib/snippets/browser/commands/configureSnippets.ts
++++ b/src/vs/workbench/contrib/snippets/browser/commands/configureSnippets.ts
+@@ -13,2 +13,3 @@ import * as nls from '../../../../../nls.js';
+ import { MenuId } from '../../../../../platform/actions/common/actions.js';
++import { IsDevelopmentContext } from '../../../../../platform/contextkey/common/contextkeys.js';
+ import { IFileService } from '../../../../../platform/files/common/files.js';
+@@ -237,4 +238,4 @@ export class ConfigureSnippetsAction extends SnippetsAction {
+ 			menu: [
+-				{ id: MenuId.MenubarPreferencesMenu, group: '2_configuration', order: 5 },
+-				{ id: MenuId.GlobalActivity, group: '2_configuration', order: 5 },
++				{ id: MenuId.MenubarPreferencesMenu, group: '2_configuration', order: 5, when: IsDevelopmentContext },
++				{ id: MenuId.GlobalActivity, group: '2_configuration', order: 5, when: IsDevelopmentContext },
+ 			]
+diff --git a/src/vs/workbench/contrib/tasks/browser/task.contribution.ts b/src/vs/workbench/contrib/tasks/browser/task.contribution.ts
+index 73cd4c5..ca249f4 100644
+--- a/src/vs/workbench/contrib/tasks/browser/task.contribution.ts
++++ b/src/vs/workbench/contrib/tasks/browser/task.contribution.ts
+@@ -38,2 +38,3 @@ import { TasksQuickAccessProvider } from './tasksQuickAccess.js';
+ import { ContextKeyExpr } from '../../../../platform/contextkey/common/contextkey.js';
++import { IsDevelopmentContext } from '../../../../platform/contextkey/common/contextkeys.js';
+ import { TaskDefinitionRegistry } from '../common/taskDefinitionRegistry.js';
+@@ -367,3 +368,3 @@ class UserTasksGlobalActionContribution extends Disposable implements IWorkbench
+ 			},
+-			when: TaskExecutionSupportedContext,
++			when: ContextKeyExpr.and(IsDevelopmentContext, TaskExecutionSupportedContext),
+ 			group: '2_configuration',
+@@ -376,3 +377,3 @@ class UserTasksGlobalActionContribution extends Disposable implements IWorkbench
+ 			},
+-			when: TaskExecutionSupportedContext,
++			when: ContextKeyExpr.and(IsDevelopmentContext, TaskExecutionSupportedContext),
+ 			group: '2_configuration',
+diff --git a/src/vs/workbench/contrib/themes/browser/themes.contribution.ts b/src/vs/workbench/contrib/themes/browser/themes.contribution.ts
+index 5614822..30514cb 100644
+--- a/src/vs/workbench/contrib/themes/browser/themes.contribution.ts
++++ b/src/vs/workbench/contrib/themes/browser/themes.contribution.ts
+@@ -8,2 +8,3 @@ import { KeyMod, KeyChord, KeyCode } from '../../../../base/common/keyCodes.js';
+ import { MenuRegistry, MenuId, Action2, registerAction2, ISubmenuItem } from '../../../../platform/actions/common/actions.js';
++import { IsDevelopmentContext } from '../../../../platform/contextkey/common/contextkeys.js';
+ import { equalsIgnoreCase } from '../../../../base/common/strings.js';
+@@ -826,2 +827,3 @@ MenuRegistry.appendMenuItem(ThemesSubMenu, {
+ 	},
++	when: IsDevelopmentContext,
+ 	order: 2
+@@ -834,2 +836,3 @@ MenuRegistry.appendMenuItem(ThemesSubMenu, {
+ 	},
++	when: IsDevelopmentContext,
+ 	order: 3
+diff --git a/src/vs/workbench/contrib/userDataProfile/browser/userDataProfile.ts b/src/vs/workbench/contrib/userDataProfile/browser/userDataProfile.ts
+index f8ea86c..3d8f018 100644
+--- a/src/vs/workbench/contrib/userDataProfile/browser/userDataProfile.ts
++++ b/src/vs/workbench/contrib/userDataProfile/browser/userDataProfile.ts
+@@ -174,3 +174,3 @@ export class UserDataProfilesWorkbenchContribution extends Disposable implements
+ 			order: 1,
+-			when: HAS_PROFILES_CONTEXT
++			when: ContextKeyExpr.and(IsDevelopmentContext, HAS_PROFILES_CONTEXT)
+ 		});
+@@ -183,3 +183,3 @@ export class UserDataProfilesWorkbenchContribution extends Disposable implements
+ 			order: 1,
+-			when: HAS_PROFILES_CONTEXT
++			when: ContextKeyExpr.and(IsDevelopmentContext, HAS_PROFILES_CONTEXT)
+ 		});
+@@ -361,3 +361,3 @@ export class UserDataProfilesWorkbenchContribution extends Disposable implements
+ 							order: 1,
+-							when: HAS_PROFILES_CONTEXT.negate()
++							when: ContextKeyExpr.and(IsDevelopmentContext, HAS_PROFILES_CONTEXT.negate())
+ 						},
+@@ -368,3 +368,3 @@ export class UserDataProfilesWorkbenchContribution extends Disposable implements
+ 							order: 1,
+-							when: HAS_PROFILES_CONTEXT.negate()
++							when: ContextKeyExpr.and(IsDevelopmentContext, HAS_PROFILES_CONTEXT.negate())
+ 						},

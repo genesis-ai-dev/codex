@@ -1,0 +1,306 @@
+diff --git a/src/vs/editor/contrib/stickyScroll/browser/stickyScrollActions.ts b/src/vs/editor/contrib/stickyScroll/browser/stickyScrollActions.ts
+index ce50821..4e656ed 100644
+--- a/src/vs/editor/contrib/stickyScroll/browser/stickyScrollActions.ts
++++ b/src/vs/editor/contrib/stickyScroll/browser/stickyScrollActions.ts
+@@ -13,2 +13,3 @@ import { KeybindingWeight } from '../../../../platform/keybinding/common/keybind
+ import { ContextKeyExpr } from '../../../../platform/contextkey/common/contextkey.js';
++import { IsDevelopmentContext } from '../../../../platform/contextkey/common/contextkeys.js';
+ import { EditorContextKeys } from '../../../common/editorContextKeys.js';
+@@ -36,4 +37,4 @@ export class ToggleStickyScroll extends EditorAction2 {
+ 			menu: [
+-				{ id: MenuId.CommandPalette },
+-				{ id: MenuId.MenubarAppearanceMenu, group: '4_editor', order: 3 },
++				{ id: MenuId.CommandPalette },
++				{ id: MenuId.MenubarAppearanceMenu, group: '4_editor', order: 3, when: IsDevelopmentContext },
+ 				{ id: MenuId.StickyScrollContext }
+diff --git a/src/vs/workbench/browser/actions/layoutActions.ts b/src/vs/workbench/browser/actions/layoutActions.ts
+index fea736c..f4dd238 100644
+--- a/src/vs/workbench/browser/actions/layoutActions.ts
++++ b/src/vs/workbench/browser/actions/layoutActions.ts
+@@ -14,3 +14,3 @@ import { KeyMod, KeyCode, KeyChord } from '../../../base/common/keyCodes.js';
+ import { isWindows, isLinux, isWeb, isMacintosh, isNative } from '../../../base/common/platform.js';
+-import { IsMacNativeContext } from '../../../platform/contextkey/common/contextkeys.js';
++import { IsDevelopmentContext, IsMacNativeContext } from '../../../platform/contextkey/common/contextkeys.js';
+ import { KeybindingsRegistry, KeybindingWeight } from '../../../platform/keybinding/common/keybindingsRegistry.js';
+@@ -410,3 +410,4 @@ export class ToggleStatusbarVisibilityAction extends Action2 {
+ 				group: '2_workbench_layout',
+-				order: 3
++				order: 3,
++				when: IsDevelopmentContext
+ 			}]
+@@ -655,3 +656,4 @@ MenuRegistry.appendMenuItem(MenuId.MenubarAppearanceMenu, {
+ 	group: '3_workbench_layout_move',
+-	order: 11
++	order: 11,
++	when: IsDevelopmentContext
+ });
+diff --git a/src/vs/workbench/browser/parts/auxiliarybar/auxiliaryBarActions.ts b/src/vs/workbench/browser/parts/auxiliarybar/auxiliaryBarActions.ts
+index 15adc24..a538f81 100644
+--- a/src/vs/workbench/browser/parts/auxiliarybar/auxiliaryBarActions.ts
++++ b/src/vs/workbench/browser/parts/auxiliarybar/auxiliaryBarActions.ts
+@@ -9,2 +9,3 @@ import { Action2, MenuId, MenuRegistry, registerAction2 } from '../../../../plat
+ import { ContextKeyExpr } from '../../../../platform/contextkey/common/contextkey.js';
++import { IsDevelopmentContext } from '../../../../platform/contextkey/common/contextkeys.js';
+ import { registerIcon } from '../../../../platform/theme/common/iconRegistry.js';
+@@ -64,3 +65,4 @@ export class ToggleAuxiliaryBarAction extends Action2 {
+ 					group: '2_workbench_layout',
+-					order: 2
++					order: 2,
++					when: IsDevelopmentContext
+ 				}
+diff --git a/src/vs/workbench/browser/parts/editor/breadcrumbsControl.ts b/src/vs/workbench/browser/parts/editor/breadcrumbsControl.ts
+index 094ee89..1599e9c 100644
+--- a/src/vs/workbench/browser/parts/editor/breadcrumbsControl.ts
++++ b/src/vs/workbench/browser/parts/editor/breadcrumbsControl.ts
+@@ -27,2 +27,3 @@ import { IClipboardService } from '../../../../platform/clipboard/common/clipboa
+ import { ContextKeyExpr, IContextKey, IContextKeyService, RawContextKey } from '../../../../platform/contextkey/common/contextkey.js';
++import { IsDevelopmentContext } from '../../../../platform/contextkey/common/contextkeys.js';
+ import { IContextViewService } from '../../../../platform/contextview/browser/contextView.js';
+@@ -702,4 +703,4 @@ registerAction2(class ToggleBreadcrumb extends Action2 {
+ 			menu: [
+-				{ id: MenuId.CommandPalette },
+-				{ id: MenuId.MenubarAppearanceMenu, group: '4_editor', order: 2 },
++				{ id: MenuId.CommandPalette },
++				{ id: MenuId.MenubarAppearanceMenu, group: '4_editor', order: 2, when: IsDevelopmentContext },
+ 				{ id: MenuId.NotebookToolbar, group: 'notebookLayout', order: 2 },
+diff --git a/src/vs/workbench/browser/parts/editor/editor.contribution.ts b/src/vs/workbench/browser/parts/editor/editor.contribution.ts
+--- a/src/vs/workbench/browser/parts/editor/editor.contribution.ts
++++ b/src/vs/workbench/browser/parts/editor/editor.contribution.ts
+@@ -757,3 +757,3 @@ MenuRegistry.appendMenuItem(MenuId.MenubarLayoutMenu, {
+ 	},
+-	when: ActiveEditorCanSplitInGroupContext,
++	when: ContextKeyExpr.and(IsDevelopmentContext, ActiveEditorCanSplitInGroupContext),
+ 	order: 1
+@@ -769,3 +769,3 @@ MenuRegistry.appendMenuItem(MenuId.MenubarLayoutMenu, {
+ 	},
+-	when: SideBySideEditorActiveContext,
++	when: ContextKeyExpr.and(IsDevelopmentContext, SideBySideEditorActiveContext),
+ 	order: 1
+@@ -779,3 +779,4 @@ MenuRegistry.appendMenuItem(MenuId.MenubarLayoutMenu, {
+ 	},
+-	order: 1
++	order: 1,
++	when: IsDevelopmentContext
+ });
+@@ -791,3 +792,4 @@ MenuRegistry.appendMenuItem(MenuId.MenubarLayoutMenu, {
+ 	},
+-	order: 2
++	order: 2,
++	when: IsDevelopmentContext
+ });
+@@ -803,3 +805,4 @@ MenuRegistry.appendMenuItem(MenuId.MenubarLayoutMenu, {
+ 	},
+-	order: 1
++	order: 1,
++	when: IsDevelopmentContext
+ });
+@@ -815,3 +818,4 @@ MenuRegistry.appendMenuItem(MenuId.MenubarLayoutMenu, {
+ 	},
+-	order: 3
++	order: 3,
++	when: IsDevelopmentContext
+ });
+@@ -827,3 +831,4 @@ MenuRegistry.appendMenuItem(MenuId.MenubarLayoutMenu, {
+ 	},
+-	order: 4
++	order: 4,
++	when: IsDevelopmentContext
+ });
+@@ -839,3 +844,4 @@ MenuRegistry.appendMenuItem(MenuId.MenubarLayoutMenu, {
+ 	},
+-	order: 5
++	order: 5,
++	when: IsDevelopmentContext
+ });
+@@ -851,3 +857,4 @@ MenuRegistry.appendMenuItem(MenuId.MenubarLayoutMenu, {
+ 	},
+-	order: 6
++	order: 6,
++	when: IsDevelopmentContext
+ });
+@@ -863,3 +870,4 @@ MenuRegistry.appendMenuItem(MenuId.MenubarLayoutMenu, {
+ 	},
+-	order: 7
++	order: 7,
++	when: IsDevelopmentContext
+ });
+@@ -875,3 +883,4 @@ MenuRegistry.appendMenuItem(MenuId.MenubarLayoutMenu, {
+ 	},
+-	order: 8
++	order: 8,
++	when: IsDevelopmentContext
+ });
+@@ -887,3 +896,4 @@ MenuRegistry.appendMenuItem(MenuId.MenubarLayoutMenu, {
+ 	},
+-	order: 9
++	order: 9,
++	when: IsDevelopmentContext
+ });
+diff --git a/src/vs/workbench/browser/parts/panel/panelActions.ts b/src/vs/workbench/browser/parts/panel/panelActions.ts
+index 1391a22..1f70155 100644
+--- a/src/vs/workbench/browser/parts/panel/panelActions.ts
++++ b/src/vs/workbench/browser/parts/panel/panelActions.ts
+@@ -13,2 +13,3 @@ import { IsAuxiliaryWindowContext, PanelAlignmentContext, PanelMaximizedContext,
+ import { ContextKeyExpr, ContextKeyExpression } from '../../../../platform/contextkey/common/contextkey.js';
++import { IsDevelopmentContext } from '../../../../platform/contextkey/common/contextkeys.js';
+ import { Codicon } from '../../../../base/common/codicons.js';
+@@ -55,3 +56,4 @@ export class TogglePanelAction extends Action2 {
+ 					group: '2_workbench_layout',
+-					order: 5
++					order: 5,
++					when: IsDevelopmentContext
+ 				}, {
+@@ -186,3 +188,4 @@ MenuRegistry.appendMenuItem(MenuId.MenubarAppearanceMenu, {
+ 	group: '3_workbench_layout_move',
+-	order: 4
++	order: 4,
++	when: IsDevelopmentContext
+ });
+@@ -221,3 +224,4 @@ MenuRegistry.appendMenuItem(MenuId.MenubarAppearanceMenu, {
+ 	group: '3_workbench_layout_move',
+-	order: 5
++	order: 5,
++	when: IsDevelopmentContext
+ });
+diff --git a/src/vs/workbench/browser/parts/titlebar/titlebarActions.ts b/src/vs/workbench/browser/parts/titlebar/titlebarActions.ts
+index 0ef3554..136b42f 100644
+--- a/src/vs/workbench/browser/parts/titlebar/titlebarActions.ts
++++ b/src/vs/workbench/browser/parts/titlebar/titlebarActions.ts
+@@ -12,2 +12,3 @@ import { Action2, MenuId, registerAction2 } from '../../../../platform/actions/c
+ import { ContextKeyExpr, ContextKeyExpression, IContextKeyService } from '../../../../platform/contextkey/common/contextkey.js';
++import { IsDevelopmentContext } from '../../../../platform/contextkey/common/contextkeys.js';
+ import { ACCOUNTS_ACTIVITY_ID, GLOBAL_ACTIVITY_ID } from '../../../common/activity.js';
+@@ -117,3 +118,3 @@ class ToggleCustomTitleBar extends Action2 {
+ 					order: 6,
+-					when: ContextKeyExpr.or(
++					when: ContextKeyExpr.and(IsDevelopmentContext, ContextKeyExpr.or(
+ 						ContextKeyExpr.and(
+@@ -129,3 +130,3 @@ class ToggleCustomTitleBar extends Action2 {
+ 						IsMainWindowFullscreenContext
+-					),
++					)),
+ 					group: '2_workbench_layout'
+diff --git a/src/vs/workbench/contrib/codeEditor/browser/toggleMinimap.ts b/src/vs/workbench/contrib/codeEditor/browser/toggleMinimap.ts
+index 0248d00..88ce4a8 100644
+--- a/src/vs/workbench/contrib/codeEditor/browser/toggleMinimap.ts
++++ b/src/vs/workbench/contrib/codeEditor/browser/toggleMinimap.ts
+@@ -9,2 +9,3 @@ import { IConfigurationService } from '../../../../platform/configuration/common
+ import { ContextKeyExpr } from '../../../../platform/contextkey/common/contextkey.js';
++import { IsDevelopmentContext } from '../../../../platform/contextkey/common/contextkeys.js';
+ import { Categories } from '../../../../platform/action/common/actionCommonCategories.js';
+@@ -29,3 +30,4 @@ export class ToggleMinimapAction extends Action2 {
+ 				group: '4_editor',
+-				order: 1
++				order: 1,
++				when: IsDevelopmentContext
+ 			}
+diff --git a/src/vs/workbench/contrib/codeEditor/browser/toggleRenderControlCharacter.ts b/src/vs/workbench/contrib/codeEditor/browser/toggleRenderControlCharacter.ts
+index 6209189..77c70af 100644
+--- a/src/vs/workbench/contrib/codeEditor/browser/toggleRenderControlCharacter.ts
++++ b/src/vs/workbench/contrib/codeEditor/browser/toggleRenderControlCharacter.ts
+@@ -9,2 +9,3 @@ import { IConfigurationService } from '../../../../platform/configuration/common
+ import { ContextKeyExpr } from '../../../../platform/contextkey/common/contextkey.js';
++import { IsDevelopmentContext } from '../../../../platform/contextkey/common/contextkeys.js';
+ import { Categories } from '../../../../platform/action/common/actionCommonCategories.js';
+@@ -29,3 +30,4 @@ export class ToggleRenderControlCharacterAction extends Action2 {
+ 				group: '4_editor',
+-				order: 5
++				order: 5,
++				when: IsDevelopmentContext
+ 			}
+diff --git a/src/vs/workbench/contrib/codeEditor/browser/toggleRenderWhitespace.ts b/src/vs/workbench/contrib/codeEditor/browser/toggleRenderWhitespace.ts
+index 9f61e23..cd3e00b 100644
+--- a/src/vs/workbench/contrib/codeEditor/browser/toggleRenderWhitespace.ts
++++ b/src/vs/workbench/contrib/codeEditor/browser/toggleRenderWhitespace.ts
+@@ -9,2 +9,3 @@ import { IConfigurationService } from '../../../../platform/configuration/common
+ import { ContextKeyExpr } from '../../../../platform/contextkey/common/contextkey.js';
++import { IsDevelopmentContext } from '../../../../platform/contextkey/common/contextkeys.js';
+ import { Categories } from '../../../../platform/action/common/actionCommonCategories.js';
+@@ -29,3 +30,4 @@ class ToggleRenderWhitespaceAction extends Action2 {
+ 				group: '4_editor',
+-				order: 4
++				order: 4,
++				when: IsDevelopmentContext
+ 			}
+diff --git a/src/vs/workbench/contrib/codeEditor/browser/toggleWordWrap.ts b/src/vs/workbench/contrib/codeEditor/browser/toggleWordWrap.ts
+index b55067b..f7be8db 100644
+--- a/src/vs/workbench/contrib/codeEditor/browser/toggleWordWrap.ts
++++ b/src/vs/workbench/contrib/codeEditor/browser/toggleWordWrap.ts
+@@ -22,2 +22,3 @@ import { MenuId, MenuRegistry } from '../../../../platform/actions/common/action
+ import { ContextKeyExpr, IContextKey, IContextKeyService, RawContextKey } from '../../../../platform/contextkey/common/contextkey.js';
++import { IsDevelopmentContext } from '../../../../platform/contextkey/common/contextkeys.js';
+ import { IInstantiationService } from '../../../../platform/instantiation/common/instantiation.js';
+@@ -344,3 +345,4 @@ MenuRegistry.appendMenuItem(MenuId.MenubarViewMenu, {
+ 	order: 1,
+-	group: '6_editor'
++	group: '6_editor',
++	when: IsDevelopmentContext
+ });
+diff --git a/src/vs/workbench/contrib/quickaccess/browser/quickAccess.contribution.ts b/src/vs/workbench/contrib/quickaccess/browser/quickAccess.contribution.ts
+--- a/src/vs/workbench/contrib/quickaccess/browser/quickAccess.contribution.ts
++++ b/src/vs/workbench/contrib/quickaccess/browser/quickAccess.contribution.ts
+@@ -80,3 +80,4 @@
+ 	},
+-	order: 2
++	order: 2,
++	when: IsDevelopmentContext
+ });
+@@ -89,3 +90,4 @@
+ 	},
+-	order: 1
++	order: 1,
++	when: IsDevelopmentContext
+ });
+diff --git a/src/vs/workbench/services/views/browser/viewsService.ts b/src/vs/workbench/services/views/browser/viewsService.ts
+index 4938ebb..59c329a 100644
+--- a/src/vs/workbench/services/views/browser/viewsService.ts
++++ b/src/vs/workbench/services/views/browser/viewsService.ts
+@@ -36,2 +36,18 @@ import { IEditorService } from '../../editor/common/editorService.js';
+ import { IViewsService } from '../common/viewsService.js';
++import { IsDevelopmentContext } from '../../../../platform/contextkey/common/contextkeys.js';
++
++const restrictedViewCommandIdsInProduction = new Set([
++	'workbench.view.explorer',
++	'workbench.view.search',
++	'workbench.view.scm',
++	'workbench.view.debug',
++	'workbench.actions.view.problems',
++	'workbench.action.output.toggleOutput',
++	'workbench.debug.action.toggleRepl',
++	'workbench.action.terminal.toggleTerminal'
++]);
++
++function isRestrictedViewCommandInProduction(commandId: string): boolean {
++	return restrictedViewCommandIdsInProduction.has(commandId);
++}
+ 
+@@ -405,2 +421,4 @@ export class ViewsService extends Disposable implements IViewsService {
+ 			const title = viewContainer.openCommandActionDescriptor.title ?? viewContainer.title;
++			const commandPrecondition = ContextKeyExpr.has(getEnabledViewContainerContextKey(viewContainer.id));
++			const restrictInProduction = isRestrictedViewCommandInProduction(id);
+ 			const that = this;
+@@ -421,3 +439,3 @@ export class ViewsService extends Disposable implements IViewsService {
+ 						category: Categories.View,
+-						precondition: ContextKeyExpr.has(getEnabledViewContainerContextKey(viewContainer.id)),
++						precondition: commandPrecondition,
+ 						keybinding: keybindings ? { ...keybindings, weight: KeybindingWeight.WorkbenchContrib } : undefined,
+@@ -462,3 +480,3 @@ export class ViewsService extends Disposable implements IViewsService {
+ 					group: defaultLocation === ViewContainerLocation.Sidebar ? '3_sidebar' : defaultLocation === ViewContainerLocation.AuxiliaryBar ? '4_auxbar' : '5_panel',
+-					when: ContextKeyExpr.has(getEnabledViewContainerContextKey(viewContainer.id)),
++					when: restrictInProduction ? ContextKeyExpr.and(IsDevelopmentContext, commandPrecondition) : commandPrecondition,
+ 					order: order ?? Number.MAX_VALUE
+@@ -475,2 +493,4 @@ export class ViewsService extends Disposable implements IViewsService {
+ 		const commandId = viewDescriptor.openCommandActionDescriptor?.id ?? `${viewDescriptor.id}.open`;
++		const commandPrecondition = ContextKeyExpr.has(`${viewDescriptor.id}.active`);
++		const restrictInProduction = isRestrictedViewCommandInProduction(commandId);
+ 		const that = this;
+@@ -491,3 +512,3 @@ export class ViewsService extends Disposable implements IViewsService {
+ 					category: Categories.View,
+-					precondition: ContextKeyExpr.has(`${viewDescriptor.id}.active`),
++					precondition: commandPrecondition,
+ 					keybinding: viewDescriptor.openCommandActionDescriptor?.keybindings ? { ...viewDescriptor.openCommandActionDescriptor.keybindings, weight: KeybindingWeight.WorkbenchContrib } : undefined,
+@@ -548,3 +569,3 @@ export class ViewsService extends Disposable implements IViewsService {
+ 					group: defaultLocation === ViewContainerLocation.Sidebar ? '3_sidebar' : defaultLocation === ViewContainerLocation.AuxiliaryBar ? '4_auxbar' : '5_panel',
+-					when: ContextKeyExpr.has(`${viewDescriptor.id}.active`),
++					when: restrictInProduction ? ContextKeyExpr.and(IsDevelopmentContext, commandPrecondition) : commandPrecondition,
+ 					order: viewDescriptor.openCommandActionDescriptor.order ?? Number.MAX_VALUE

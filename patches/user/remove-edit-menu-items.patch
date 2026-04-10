@@ -1,0 +1,46 @@
+diff --git a/src/vs/editor/contrib/comment/browser/comment.ts b/src/vs/editor/contrib/comment/browser/comment.ts
+index 4b2a146..a502cb7 100644
+--- a/src/vs/editor/contrib/comment/browser/comment.ts
++++ b/src/vs/editor/contrib/comment/browser/comment.ts
+@@ -8,2 +8,3 @@ import * as nls from '../../../../nls.js';
+ import { MenuId } from '../../../../platform/actions/common/actions.js';
++import { IsDevelopmentContext } from '../../../../platform/contextkey/common/contextkeys.js';
+ import { KeybindingWeight } from '../../../../platform/keybinding/common/keybindingsRegistry.js';
+@@ -95,3 +96,4 @@ class ToggleCommentLineAction extends CommentLineAction {
+ 				title: nls.localize({ key: 'miToggleLineComment', comment: ['&& denotes a mnemonic'] }, "&&Toggle Line Comment"),
+-				order: 1
++				order: 1,
++				when: IsDevelopmentContext
+ 			},
+@@ -151,3 +153,4 @@ class BlockCommentAction extends EditorAction {
+ 				title: nls.localize({ key: 'miToggleBlockComment', comment: ['&& denotes a mnemonic'] }, "Toggle &&Block Comment"),
+-				order: 2
++				order: 2,
++				when: IsDevelopmentContext
+ 			},
+diff --git a/src/vs/workbench/contrib/search/browser/searchActionsFind.ts b/src/vs/workbench/contrib/search/browser/searchActionsFind.ts
+index 2453e14..1558adf 100644
+--- a/src/vs/workbench/contrib/search/browser/searchActionsFind.ts
++++ b/src/vs/workbench/contrib/search/browser/searchActionsFind.ts
+@@ -18,2 +18,3 @@ import { URI } from '../../../../base/common/uri.js';
+ import { ContextKeyExpr } from '../../../../platform/contextkey/common/contextkey.js';
++import { IsDevelopmentContext } from '../../../../platform/contextkey/common/contextkeys.js';
+ import { Action2, MenuId, registerAction2 } from '../../../../platform/actions/common/actions.js';
+@@ -266,2 +267,3 @@ registerAction2(class FindInFilesAction extends Action2 {
+ 				order: 1,
++				when: IsDevelopmentContext
+ 			}],
+diff --git a/src/vs/workbench/contrib/search/browser/searchActionsNav.ts b/src/vs/workbench/contrib/search/browser/searchActionsNav.ts
+index 97186a8..fdda34a 100644
+--- a/src/vs/workbench/contrib/search/browser/searchActionsNav.ts
++++ b/src/vs/workbench/contrib/search/browser/searchActionsNav.ts
+@@ -18,2 +18,3 @@ import { IEditorService } from '../../../services/editor/common/editorService.js
+ import { ContextKeyExpr, IContextKeyService } from '../../../../platform/contextkey/common/contextkey.js';
++import { IsDevelopmentContext } from '../../../../platform/contextkey/common/contextkeys.js';
+ import { assertReturnsDefined } from '../../../../base/common/types.js';
+@@ -408,3 +409,4 @@ registerAction2(class ReplaceInFilesAction extends Action2 {
+ 				group: '4_find_global',
+-				order: 2
++				order: 2,
++				when: IsDevelopmentContext
+ 			}],

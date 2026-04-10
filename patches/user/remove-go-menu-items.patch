@@ -1,0 +1,140 @@
+diff --git a/src/vs/editor/contrib/bracketMatching/browser/bracketMatching.ts b/src/vs/editor/contrib/bracketMatching/browser/bracketMatching.ts
+index 7e64b4e..aa5c9f0 100644
+--- a/src/vs/editor/contrib/bracketMatching/browser/bracketMatching.ts
++++ b/src/vs/editor/contrib/bracketMatching/browser/bracketMatching.ts
+@@ -21,2 +21,3 @@ import * as nls from '../../../../nls.js';
+ import { MenuId, MenuRegistry } from '../../../../platform/actions/common/actions.js';
++import { IsDevelopmentContext } from '../../../../platform/contextkey/common/contextkeys.js';
+ import { KeybindingWeight } from '../../../../platform/keybinding/common/keybindingsRegistry.js';
+@@ -414,3 +415,4 @@ MenuRegistry.appendMenuItem(MenuId.MenubarGoMenu, {
+ 	},
+-	order: 2
++	order: 2,
++	when: IsDevelopmentContext
+ });
+diff --git a/src/vs/editor/contrib/gotoError/browser/gotoError.ts b/src/vs/editor/contrib/gotoError/browser/gotoError.ts
+index eea7aa4..6bca1f6 100644
+--- a/src/vs/editor/contrib/gotoError/browser/gotoError.ts
++++ b/src/vs/editor/contrib/gotoError/browser/gotoError.ts
+@@ -19,3 +19,4 @@ import * as nls from '../../../../nls.js';
+ import { MenuId } from '../../../../platform/actions/common/actions.js';
+ import { IContextKey, IContextKeyService, RawContextKey } from '../../../../platform/contextkey/common/contextkey.js';
++import { IsDevelopmentContext } from '../../../../platform/contextkey/common/contextkeys.js';
+ import { TextEditorSelectionRevealType } from '../../../../platform/editor/common/editor.js';
+@@ -209,3 +210,4 @@ export class NextMarkerAction extends MarkerNavigationAction {
+ 				group: 'navigation',
+-				order: 1
++				order: 1,
++				when: IsDevelopmentContext
+ 			}
+@@ -233,3 +235,4 @@ class PrevMarkerAction extends MarkerNavigationAction {
+ 				group: 'navigation',
+-				order: 2
++				order: 2,
++				when: IsDevelopmentContext
+ 			}
+diff --git a/src/vs/editor/contrib/gotoSymbol/browser/goToCommands.ts b/src/vs/editor/contrib/gotoSymbol/browser/goToCommands.ts
+index 15dc3bf..02ade2b 100644
+--- a/src/vs/editor/contrib/gotoSymbol/browser/goToCommands.ts
++++ b/src/vs/editor/contrib/gotoSymbol/browser/goToCommands.ts
+@@ -41,3 +41,3 @@ import { ILanguageFeaturesService } from '../../../common/services/languageFeatu
+ import { Iterable } from '../../../../base/common/iterator.js';
+-import { IsWebContext } from '../../../../platform/contextkey/common/contextkeys.js';
++import { IsDevelopmentContext, IsWebContext } from '../../../../platform/contextkey/common/contextkeys.js';
+ 
+@@ -307,2 +307,3 @@ registerAction2(class GoToDefinitionAction extends DefinitionAction {
+ 				order: 2,
++				when: IsDevelopmentContext
+ 			}]
+@@ -428,2 +429,3 @@ registerAction2(class GoToDeclarationAction extends DeclarationAction {
+ 				order: 3,
++				when: IsDevelopmentContext
+ 			}],
+@@ -517,2 +519,3 @@ registerAction2(class GoToTypeDefinitionAction extends TypeDefinitionAction {
+ 				order: 3,
++				when: IsDevelopmentContext
+ 			}]
+@@ -603,2 +606,3 @@ registerAction2(class GoToImplementationAction extends ImplementationAction {
+ 				order: 4,
++				when: IsDevelopmentContext
+ 			}]
+@@ -692,2 +696,3 @@ registerAction2(class GoToReferencesAction extends ReferencesAction {
+ 				order: 5,
++				when: IsDevelopmentContext
+ 			}]
+diff --git a/src/vs/workbench/browser/parts/editor/editor.contribution.ts b/src/vs/workbench/browser/parts/editor/editor.contribution.ts
+index 1423548..c2eb37e 100644
+--- a/src/vs/workbench/browser/parts/editor/editor.contribution.ts
++++ b/src/vs/workbench/browser/parts/editor/editor.contribution.ts
+@@ -669,3 +669,4 @@ MenuRegistry.appendMenuItem(MenuId.MenubarRecentMenu, {
+ 	},
+-	order: 1
++	order: 1,
++	when: IsDevelopmentContext
+ });
+diff --git a/src/vs/workbench/contrib/codeEditor/browser/quickaccess/gotoSymbolQuickAccess.ts b/src/vs/workbench/contrib/codeEditor/browser/quickaccess/gotoSymbolQuickAccess.ts
+index d8dea5c..dbd742c 100644
+--- a/src/vs/workbench/contrib/codeEditor/browser/quickaccess/gotoSymbolQuickAccess.ts
++++ b/src/vs/workbench/contrib/codeEditor/browser/quickaccess/gotoSymbolQuickAccess.ts
+@@ -36,2 +36,3 @@ import { ContextKeyExpr } from '../../../../../platform/contextkey/common/contex
+ import { accessibilityHelpIsShown, accessibleViewIsShown } from '../../../accessibility/browser/accessibilityConfiguration.js';
++import { IsDevelopmentContext } from '../../../../../platform/contextkey/common/contextkeys.js';
+ import { matchesFuzzyIconAware, parseLabelWithIcons } from '../../../../../base/common/iconLabels.js';
+@@ -269,3 +270,4 @@ class GotoSymbolAction extends Action2 {
+ 				group: '4_symbol_nav',
+-				order: 1
++				order: 1,
++				when: IsDevelopmentContext
+ 			}]
+diff --git a/src/vs/workbench/contrib/files/browser/fileActions.contribution.ts b/src/vs/workbench/contrib/files/browser/fileActions.contribution.ts
+--- a/src/vs/workbench/contrib/files/browser/fileActions.contribution.ts
++++ b/src/vs/workbench/contrib/files/browser/fileActions.contribution.ts
+@@ -759,3 +759,4 @@ MenuRegistry.appendMenuItem(MenuId.MenubarGoMenu, {
+ 	},
+-	order: 1
++	order: 1,
++	when: IsDevelopmentContext
+ });
+diff --git a/src/vs/workbench/contrib/quickaccess/browser/quickAccess.contribution.ts b/src/vs/workbench/contrib/quickaccess/browser/quickAccess.contribution.ts
+--- a/src/vs/workbench/contrib/quickaccess/browser/quickAccess.contribution.ts
++++ b/src/vs/workbench/contrib/quickaccess/browser/quickAccess.contribution.ts
+@@ -60,3 +61,4 @@ MenuRegistry.appendMenuItem(MenuId.MenubarViewMenu, {
+ 	},
+-	order: 1
++	order: 1,
++	when: IsDevelopmentContext
+ });
+diff --git a/src/vs/workbench/contrib/scm/browser/quickDiffWidget.ts b/src/vs/workbench/contrib/scm/browser/quickDiffWidget.ts
+index 20c82af..078fe8a 100644
+--- a/src/vs/workbench/contrib/scm/browser/quickDiffWidget.ts
++++ b/src/vs/workbench/contrib/scm/browser/quickDiffWidget.ts
+@@ -33,2 +33,3 @@ import { ICodeEditorService } from '../../../../editor/browser/services/codeEdit
+ import { TextCompareEditorActiveContext } from '../../../common/contextkeys.js';
++import { IsDevelopmentContext } from '../../../../platform/contextkey/common/contextkeys.js';
+ import { EditorContextKeys } from '../../../../editor/common/editorContextKeys.js';
+@@ -921,3 +922,4 @@ MenuRegistry.appendMenuItem(MenuId.MenubarGoMenu, {
+ 	},
+-	order: 1
++	order: 1,
++	when: IsDevelopmentContext
+ });
+@@ -930,3 +932,4 @@ MenuRegistry.appendMenuItem(MenuId.MenubarGoMenu, {
+ 	},
+-	order: 2
++	order: 2,
++	when: IsDevelopmentContext
+ });
+diff --git a/src/vs/workbench/contrib/search/browser/searchActionsSymbol.ts b/src/vs/workbench/contrib/search/browser/searchActionsSymbol.ts
+index 8be969e..78cd8d6 100644
+--- a/src/vs/workbench/contrib/search/browser/searchActionsSymbol.ts
++++ b/src/vs/workbench/contrib/search/browser/searchActionsSymbol.ts
+@@ -12,2 +12,3 @@ import { KeyCode, KeyMod } from '../../../../base/common/keyCodes.js';
+ import { IQuickInputService } from '../../../../platform/quickinput/common/quickInput.js';
++import { IsDevelopmentContext } from '../../../../platform/contextkey/common/contextkeys.js';
+ 
+@@ -36,3 +37,4 @@ registerAction2(class ShowAllSymbolsAction extends Action2 {
+ 				group: '3_global_nav',
+-				order: 2
++				order: 2,
++				when: IsDevelopmentContext
+ 			}
