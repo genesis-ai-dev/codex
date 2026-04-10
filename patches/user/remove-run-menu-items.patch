@@ -1,0 +1,73 @@
+diff --git a/src/vs/workbench/contrib/debug/browser/debug.contribution.ts b/src/vs/workbench/contrib/debug/browser/debug.contribution.ts
+--- a/src/vs/workbench/contrib/debug/browser/debug.contribution.ts
++++ b/src/vs/workbench/contrib/debug/browser/debug.contribution.ts
+@@ -16,2 +16,3 @@ import { Extensions as ConfigurationExtensions, ConfigurationScope, IConfigurationRegistry } from '../../../../platform/configuration/common/configurationRegistry.js';
+ import { ContextKeyExpr, ContextKeyExpression } from '../../../../platform/contextkey/common/contextkey.js';
++import { IsDevelopmentContext } from '../../../../platform/contextkey/common/contextkeys.js';
+ import { SyncDescriptor } from '../../../../platform/instantiation/common/descriptors.js';
+@@ -268,2 +269,3 @@ MenuRegistry.appendMenuItem(MenuId.MenubarMainMenu, {
+-	order: 6
++	order: 6,
++	when: IsDevelopmentContext
+ });
+@@ -278,3 +280,3 @@ MenuRegistry.appendMenuItem(MenuId.MenubarDebugMenu, {
+ 	order: 1,
+-	when: CONTEXT_DEBUGGERS_AVAILABLE
++	when: ContextKeyExpr.and(IsDevelopmentContext, CONTEXT_DEBUGGERS_AVAILABLE)
+ });
+@@ -288,3 +290,3 @@ MenuRegistry.appendMenuItem(MenuId.MenubarDebugMenu, {
+ 	order: 2,
+-	when: CONTEXT_DEBUGGERS_AVAILABLE
++	when: ContextKeyExpr.and(IsDevelopmentContext, CONTEXT_DEBUGGERS_AVAILABLE)
+ });
+@@ -299,3 +301,3 @@ MenuRegistry.appendMenuItem(MenuId.MenubarDebugMenu, {
+ 	order: 3,
+-	when: CONTEXT_DEBUGGERS_AVAILABLE
++	when: ContextKeyExpr.and(IsDevelopmentContext, CONTEXT_DEBUGGERS_AVAILABLE)
+ });
+@@ -310,3 +312,3 @@ MenuRegistry.appendMenuItem(MenuId.MenubarDebugMenu, {
+ 	order: 4,
+-	when: CONTEXT_DEBUGGERS_AVAILABLE
++	when: ContextKeyExpr.and(IsDevelopmentContext, CONTEXT_DEBUGGERS_AVAILABLE)
+ });
+@@ -322,3 +324,3 @@ MenuRegistry.appendMenuItem(MenuId.MenubarDebugMenu, {
+ 	order: 2,
+-	when: CONTEXT_DEBUGGERS_AVAILABLE
++	when: ContextKeyExpr.and(IsDevelopmentContext, CONTEXT_DEBUGGERS_AVAILABLE)
+ });
+@@ -334,3 +336,3 @@ MenuRegistry.appendMenuItem(MenuId.MenubarDebugMenu, {
+ 	order: 1,
+-	when: CONTEXT_DEBUGGERS_AVAILABLE
++	when: ContextKeyExpr.and(IsDevelopmentContext, CONTEXT_DEBUGGERS_AVAILABLE)
+ });
+@@ -345,3 +347,3 @@ MenuRegistry.appendMenuItem(MenuId.MenubarDebugMenu, {
+ 	order: 2,
+-	when: CONTEXT_DEBUGGERS_AVAILABLE
++	when: ContextKeyExpr.and(IsDevelopmentContext, CONTEXT_DEBUGGERS_AVAILABLE)
+ });
+@@ -356,3 +358,3 @@ MenuRegistry.appendMenuItem(MenuId.MenubarDebugMenu, {
+ 	order: 3,
+-	when: CONTEXT_DEBUGGERS_AVAILABLE
++	when: ContextKeyExpr.and(IsDevelopmentContext, CONTEXT_DEBUGGERS_AVAILABLE)
+ });
+@@ -367,3 +369,3 @@ MenuRegistry.appendMenuItem(MenuId.MenubarDebugMenu, {
+ 	order: 4,
+-	when: CONTEXT_DEBUGGERS_AVAILABLE
++	when: ContextKeyExpr.and(IsDevelopmentContext, CONTEXT_DEBUGGERS_AVAILABLE)
+ });
+@@ -379,3 +381,3 @@ MenuRegistry.appendMenuItem(MenuId.MenubarNewBreakpointMenu, {
+ 	order: 2,
+-	when: CONTEXT_DEBUGGERS_AVAILABLE
++	when: ContextKeyExpr.and(IsDevelopmentContext, CONTEXT_DEBUGGERS_AVAILABLE)
+ });
+@@ -387,3 +389,3 @@ MenuRegistry.appendMenuItem(MenuId.MenubarDebugMenu, {
+ 	order: 2,
+-	when: CONTEXT_DEBUGGERS_AVAILABLE
++	when: ContextKeyExpr.and(IsDevelopmentContext, CONTEXT_DEBUGGERS_AVAILABLE)
+ });
+@@ -421,3 +423,4 @@ MenuRegistry.appendMenuItem(MenuId.MenubarDebugMenu, {
+ 	},
+-	order: 1
++	order: 1,
++	when: IsDevelopmentContext
+ });
