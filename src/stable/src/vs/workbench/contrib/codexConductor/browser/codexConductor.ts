@@ -38,6 +38,10 @@ const PROFILE_ASSOCIATIONS_KEY = 'codex.conductor.profileAssociations';
 const LAST_CLEANUP_KEY = 'codex.conductor.lastCleanup';
 const CLEANUP_INTERVAL_MS = 14 * 24 * 60 * 60 * 1000; // 14 days
 
+const ADMIN_PINNED_EXTENSIONS_KEY = 'codex.conductor.adminPinnedExtensions';
+const REMOTE_PINNED_EXTENSIONS_KEY = 'codex.conductor.remotePinnedExtensions';
+const SYNC_COMPLETED_AT_KEY = 'codex.conductor.syncCompletedAt';
+
 /** Strip publisher prefix and common suffixes to get a short profile-friendly name. */
 function shortName(extensionId: string): string {
 	const afterDot = extensionId.includes('.') ? extensionId.slice(extensionId.indexOf('.') + 1) : extensionId;
@@ -71,6 +75,38 @@ export class CodexConductorContribution extends Disposable implements IWorkbench
 
 		this._register(CommandsRegistry.registerCommand('codex.conductor.cleanupProfiles', () => this.runProfileCleanup()));
 		this._register(CommandsRegistry.registerCommand('codex.conductor.getEffectivePinnedExtensions', () => this.readEffectivePinsInternal()));
+		
+		this._register(CommandsRegistry.registerCommand('codex.conductor.setAdminPinIntent', (_accessor, pins: PinnedExtensions) => {
+			this.storageService.store(ADMIN_PINNED_EXTENSIONS_KEY, JSON.stringify(pins), StorageScope.WORKSPACE, StorageTarget.MACHINE);
+		}));
+
+		this._register(CommandsRegistry.registerCommand('codex.conductor.clearAdminPinIntent', () => {
+			this.storageService.remove(ADMIN_PINNED_EXTENSIONS_KEY, StorageScope.WORKSPACE);
+		}));
+
+		this._register(CommandsRegistry.registerCommand('codex.conductor.setRemotePins', (_accessor, pins: PinnedExtensions) => {
+			this.storageService.store(REMOTE_PINNED_EXTENSIONS_KEY, JSON.stringify(pins), StorageScope.WORKSPACE, StorageTarget.MACHINE);
+		}));
+
+		this._register(CommandsRegistry.registerCommand('codex.conductor.getPinMismatches', async () => {
+			const pins = await this.readEffectivePinsInternal();
+			if (!pins) { return []; }
+			
+			const installed = await this.extensionManagementService.getInstalled();
+			const mismatches: { extensionId: string; pinnedVersion: string; runningVersion: string | null }[] = [];
+			for (const [id, pin] of Object.entries(pins)) {
+				const ext = installed.find(e => e.identifier.id.toLowerCase() === id.toLowerCase());
+				if (!ext || ext.manifest.version !== pin.version) {
+					mismatches.push({ extensionId: id, pinnedVersion: pin.version, runningVersion: ext?.manifest.version || null });
+				}
+			}
+			return mismatches;
+		}));
+
+		this._register(CommandsRegistry.registerCommand('codex.conductor.setSyncCompletedAt', (_accessor, timestamp: number) => {
+			this.storageService.store(SYNC_COMPLETED_AT_KEY, timestamp, StorageScope.WORKSPACE, StorageTarget.MACHINE);
+		}));
+
 		this._register(this.workspaceContextService.onDidChangeWorkbenchState(() => this.initialize()));
 
 		this.initialize();
@@ -115,7 +151,7 @@ export class CodexConductorContribution extends Disposable implements IWorkbench
 		this.syncCompletionListener.add(
 			this.storageService.onDidChangeValue(
 				StorageScope.WORKSPACE,
-				FRONTIER_EXTENSION_ID,
+				REMOTE_PINNED_EXTENSIONS_KEY,
 				this.syncCompletionListener
 			)(() => {
 				this.checkForPinChanges();
@@ -322,13 +358,11 @@ export class CodexConductorContribution extends Disposable implements IWorkbench
 	 * 3. Local Pins (metadata.json on disk) - Fallback.
 	 */
 	private async readEffectivePinsInternal(): Promise<PinnedExtensions | undefined> {
-		const rawStorage = this.storageService.get(FRONTIER_EXTENSION_ID, StorageScope.WORKSPACE);
-		if (rawStorage) {
+		// 1. Check Admin Intent (highest precedence)
+		const rawAdmin = this.storageService.get(ADMIN_PINNED_EXTENSIONS_KEY, StorageScope.WORKSPACE);
+		if (rawAdmin) {
 			try {
-				const state = JSON.parse(rawStorage);
-
-				// 1. Check Admin Intent (highest precedence)
-				const adminIntent = parsePinnedExtensions(state?.adminPinnedExtensions);
+				const adminIntent = parsePinnedExtensions(JSON.parse(rawAdmin));
 				if (adminIntent) {
 					// We only honor the intent if it matches what's currently running.
 					// This prevents "intent leakage" if the admin manually changes
@@ -348,15 +382,22 @@ export class CodexConductorContribution extends Disposable implements IWorkbench
 						return adminIntent;
 					}
 				}
+			} catch {
+				this.logService.warn('[CodexConductor] Malformed admin intent in storage');
+			}
+		}
 
-				// 2. Check Remote Pins (authoritative for users)
-				const remotePins = parsePinnedExtensions(state?.remotePinnedExtensions);
+		// 2. Check Remote Pins (authoritative for users)
+		const rawRemote = this.storageService.get(REMOTE_PINNED_EXTENSIONS_KEY, StorageScope.WORKSPACE);
+		if (rawRemote) {
+			try {
+				const remotePins = parsePinnedExtensions(JSON.parse(rawRemote));
 				if (remotePins) {
 					this.logService.trace('[CodexConductor] Remote pins found in storage — prioritizing over metadata.json');
 					return remotePins;
 				}
 			} catch {
-				this.logService.warn('[CodexConductor] Malformed workspace state in storage');
+				this.logService.warn('[CodexConductor] Malformed remote pins in storage');
 			}
 		}
 

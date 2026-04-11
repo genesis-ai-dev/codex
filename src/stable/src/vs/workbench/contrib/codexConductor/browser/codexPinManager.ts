@@ -274,9 +274,9 @@ function showHub(quickInputService: IQuickInputService, metadata: ProjectMetadat
 async function updateAdminIntent(commandService: ICommandService, pins: Record<string, { version: string; url: string }> | undefined, logService: ILogService): Promise<void> {
 	try {
 		if (pins && Object.keys(pins).length > 0) {
-			await commandService.executeCommand('frontier.setAdminPinIntent', pins);
+			await commandService.executeCommand('codex.conductor.setAdminPinIntent', pins);
 		} else {
-			await commandService.executeCommand('frontier.clearAdminPinIntent');
+			await commandService.executeCommand('codex.conductor.clearAdminPinIntent');
 		}
 	} catch (e: unknown) {
 		logService.warn(`[CodexPinManager] Failed to update admin pin intent: ${e}`);
