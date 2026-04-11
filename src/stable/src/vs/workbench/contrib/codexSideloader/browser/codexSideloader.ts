@@ -11,6 +11,7 @@ import { IProductService } from '../../../../platform/product/common/productServ
 import { ILogService } from '../../../../platform/log/common/log.js';
 import { INotificationService, Severity } from '../../../../platform/notification/common/notification.js';
 import { ISharedProcessService } from '../../../../platform/ipc/electron-browser/services.js';
+import { IUserDataProfileService } from '../../../services/userDataProfile/common/userDataProfile.js';
 import { CancellationToken } from '../../../../base/common/cancellation.js';
 import { ExtensionType } from '../../../../platform/extensions/common/extensions.js';
 import { URI } from '../../../../base/common/uri.js';
@@ -54,8 +55,19 @@ export class CodexSideloaderContribution extends Disposable implements IWorkbenc
 		@ILogService private readonly logService: ILogService,
 		@INotificationService private readonly notificationService: INotificationService,
 		@ISharedProcessService private readonly sharedProcessService: ISharedProcessService,
+		@IUserDataProfileService private readonly userDataProfileService: IUserDataProfileService,
 	) {
 		super();
+
+		// Only run sideload in the default profile. CodexConductor owns
+		// extension management inside pin profiles (via explicit
+		// profileLocation); the shared-process 'extensions' install channel
+		// defaults to the default profile when no profileLocation is passed,
+		// so running the sideloader in a pin-profile window would silently
+		// and pointlessly change the default profile.
+		if (!this.userDataProfileService.currentProfile.isDefault) {
+			return;
+		}
 
 		const configured = (this.productService as unknown as Record<string, unknown>)['codexSideloadExtensions'];
 		if (!Array.isArray(configured) || configured.length === 0) {
