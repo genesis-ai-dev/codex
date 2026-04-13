@@ -5,12 +5,12 @@
 # to run with Bash: "C:\Program Files\Git\bin\bash.exe" ./dev/build.sh
 ###
 
-export APP_NAME="Codex"
-export ASSETS_REPOSITORY="BiblioNexus-Foundation/codex"
-export BINARY_NAME="codex"
+export APP_NAME="${APP_NAME:-Codex}"
+export ASSETS_REPOSITORY="${ASSETS_REPOSITORY:-BiblioNexus-Foundation/codex}"
+export BINARY_NAME="${BINARY_NAME:-codex}"
 export CI_BUILD="no"
-export GH_REPO_PATH="genesis-ai-dev/codex"
-export ORG_NAME="Codex"
+export GH_REPO_PATH="${GH_REPO_PATH:-genesis-ai-dev/codex}"
+export ORG_NAME="${ORG_NAME:-Codex}"
 export SHOULD_BUILD="yes"
 export SKIP_ASSETS="yes"
 export SHOULD_BUILD_REH="no"
