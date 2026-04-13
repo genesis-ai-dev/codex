@@ -49,7 +49,7 @@ export VSCODE_QUALITY="stable"
 
 echo "==> Starting build for $APP_NAME ($VERSION)"
 # dev/build.sh is the main entry point for local builds
-./dev/build.sh -p
+./dev/build.sh -sp
 
 # ---------------------------------------------------------------------------
 # Release on GitHub
