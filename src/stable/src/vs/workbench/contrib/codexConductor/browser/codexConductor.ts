@@ -157,7 +157,7 @@ export class CodexConductorContribution extends Disposable implements IWorkbench
 			undefined, // listen to all keys in this scope
 			this.syncCompletionListener
 		)((e) => {
-			if (e.key === REMOTE_PINNED_EXTENSIONS_KEY || e.key === SYNC_COMPLETED_AT_KEY) {
+			if (e.key === REMOTE_PINNED_EXTENSIONS_KEY || e.key === SYNC_COMPLETED_AT_KEY || e.key === ADMIN_PINNED_EXTENSIONS_KEY) {
 				this.checkForPinChanges();
 			}
 		});
