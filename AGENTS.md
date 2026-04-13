@@ -159,6 +159,7 @@ Some Codex patches modify files that earlier patches also touch. When this happe
 | Patch | Depends on |
 |-------|-----------|
 | `feat-cli-pinning.patch` | `binary-name.patch` (both modify `nativeHostMainService.ts`) |
+| `feat-codex-sideloader.patch` | `feat-codex-conductor.patch` (both add imports to `workbench.common.main.ts`) |
 
 If a patch fails to apply with "patch does not apply", check whether a prerequisite patch changed the same file. Regenerate using `dev/patch.sh` with the prerequisite listed first.
 
@@ -184,7 +185,7 @@ Enforces project-scoped extension version pins. Reads `pinnedExtensions` from pr
 **Location:** `src/stable/src/vs/workbench/contrib/codexSideloader/`
 **Patch:** `patches/feat-codex-sideloader.patch` (adds import to `workbench.common.main.ts`, depends on `feat-codex-conductor.patch`)
 
-Ensures global extensions are installed on first launch. Reads the `codexSideloadExtensions` array from `product.json`. Entries can be a string (gallery install from Open VSX) or an object with `id` + `vsix` fields (direct VSIX install via shared process IPC, bypassing the marketplace). Replaces the standalone `extension-sideloader` extension.
+Ensures global extensions are installed on startup. Reads the `codexSideloadExtensions` array from `product.json`. Entries can be a string (gallery install from Open VSX) or an object with `id`, `vsix`, and `version` fields (direct VSIX install via shared process IPC, bypassing the marketplace). String entries are skipped if the extension is already installed at any version; object entries are reinstalled whenever the installed version doesn't match `version`. Replaces the standalone `extension-sideloader` extension.
 
 ### CLI Pin Commands (Rust)
 
