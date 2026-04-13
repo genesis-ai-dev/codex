@@ -42,14 +42,14 @@ if [[ -z "${RELEASE_VERSION}" ]]; then
   fi
 else
   if [[ "${VSCODE_QUALITY}" == "insider" ]]; then
-    if [[ "${RELEASE_VERSION}" =~ ^([0-9]+\.[0-9]+\.[0-5])[0-9]+-insider$ ]]; then
+    if [[ "${RELEASE_VERSION}" =~ ^([0-9]+\.[0-9]+\.[0-9]+) ]]; then
       MS_TAG="${BASH_REMATCH[1]}"
     else
       echo "Error: Bad RELEASE_VERSION: ${RELEASE_VERSION}"
       exit 1
     fi
   else
-    if [[ "${RELEASE_VERSION}" =~ ^([0-9]+\.[0-9]+\.[0-5])[0-9]+$ ]]; then
+    if [[ "${RELEASE_VERSION}" =~ ^([0-9]+\.[0-9]+\.[0-9]+) ]]; then
       MS_TAG="${BASH_REMATCH[1]}"
     else
       echo "Error: Bad RELEASE_VERSION: ${RELEASE_VERSION}"
