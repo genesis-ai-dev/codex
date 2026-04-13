@@ -101,7 +101,11 @@ if [[ "${OS_NAME}" == "osx" ]]; then
     if [[ -z "${CERTIFICATE_OSX_P12_DATA}" ]]; then
       printf '%s\n' "${YELLOW}Warning: generating an unsigned macOS DMG because no Developer ID signing certificate is configured. Team members may see Gatekeeper warnings when opening it.${RESET}"
     fi
-    npx create-dmg ./*.app .
+    npx create-dmg ./*.app . || true
+    if ! ls ./*.dmg 1>/dev/null 2>&1; then
+      echo "Error: DMG creation failed — no .dmg file was produced" >&2
+      exit 1
+    fi
     mv ./*.dmg "../assets/${APP_NAME}.${VSCODE_ARCH}.${RELEASE_VERSION}.dmg"
     popd
   fi
