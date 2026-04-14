@@ -12,6 +12,7 @@ import { ILogService } from '../../../../platform/log/common/log.js';
 import { INotificationService, Severity } from '../../../../platform/notification/common/notification.js';
 import { ISharedProcessService } from '../../../../platform/ipc/electron-browser/services.js';
 import { IUserDataProfileService } from '../../../services/userDataProfile/common/userDataProfile.js';
+import { IUserDataProfilesService } from '../../../../platform/userDataProfile/common/userDataProfile.js';
 import { CancellationToken } from '../../../../base/common/cancellation.js';
 import { ExtensionType } from '../../../../platform/extensions/common/extensions.js';
 import { URI } from '../../../../base/common/uri.js';
@@ -56,15 +57,14 @@ export class CodexSideloaderContribution extends Disposable implements IWorkbenc
 		@INotificationService private readonly notificationService: INotificationService,
 		@ISharedProcessService private readonly sharedProcessService: ISharedProcessService,
 		@IUserDataProfileService private readonly userDataProfileService: IUserDataProfileService,
+		@IUserDataProfilesService private readonly userDataProfilesService: IUserDataProfilesService,
 	) {
 		super();
 
-		// Only run sideload in the default profile. CodexConductor owns
-		// extension management inside pin profiles (via explicit
-		// profileLocation); the shared-process 'extensions' install channel
-		// defaults to the default profile when no profileLocation is passed,
-		// so running the sideloader in a pin-profile window would silently
-		// and pointlessly change the default profile.
+		// Only run sideload in the default profile. All sideload installs
+		// target the global extension location (defaultProfile.extensionsResource),
+		// which is visible in all profiles, so there is no benefit to running
+		// again in a pin-profile window.
 		if (!this.userDataProfileService.currentProfile.isDefault) {
 			return;
 		}
@@ -173,6 +173,7 @@ export class CodexSideloaderContribution extends Disposable implements IWorkbenc
 				await channel.call('install', [URI.parse(entry.vsix), {
 					installGivenVersion: true,
 					pinned: true,
+					profileLocation: this.userDataProfilesService.defaultProfile.extensionsResource,
 				}]);
 				this.logService.info(`${TAG} Installed "${entry.id}" from VSIX ${entry.vsix}`);
 			} catch (err) {
