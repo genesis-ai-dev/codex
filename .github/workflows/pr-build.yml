@@ -8,6 +8,12 @@ on:
       pr_number:
         type: string
         required: true
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: 'PR Number'
+        type: string
+        required: true
 
 jobs:
   prepare:
