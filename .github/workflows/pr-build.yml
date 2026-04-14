@@ -106,6 +106,7 @@ jobs:
       CUSTOM_RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
       VSCODE_ARCH: x64
       VSCODE_QUALITY: stable
+      OS_NAME: windows
       SHOULD_BUILD: 'yes'
       SHOULD_BUILD_REH: 'no'
       SHOULD_BUILD_REH_WEB: 'no'
