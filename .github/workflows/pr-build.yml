@@ -3,17 +3,16 @@ name: PR Build
 on:
   issue_comment:
     types: [created]
-  workflow_dispatch:
+  workflow_call:
     inputs:
       pr_number:
-        description: 'PR number to build'
-        required: true
         type: string
+        required: true
 
 jobs:
   prepare:
     if: |
-      github.event_name == 'workflow_dispatch' ||
+      github.event_name == 'workflow_call' ||
       (github.event.issue.pull_request != null &&
        github.event.comment.body == '/build' &&
        (github.event.comment.author_association == 'OWNER' ||
@@ -31,7 +30,7 @@ jobs:
         uses: actions/github-script@v7
         with:
           script: |
-            const pr_number = context.eventName === 'workflow_dispatch'
+            const pr_number = context.eventName === 'workflow_call'
               ? Number('${{ inputs.pr_number }}')
               : context.issue.number;
             const pr = await github.rest.pulls.get({
