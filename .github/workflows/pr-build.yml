@@ -96,129 +96,147 @@ jobs:
           path: assets/*.dmg
           retention-days: 3
 
-  compile-windows:
-    needs: prepare
-    runs-on: ubuntu-22.04
-    env:
-      APP_NAME: Codex Beta
-      BINARY_NAME: codex-beta
-      RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
-      CUSTOM_RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
-      VSCODE_ARCH: x64
-      VSCODE_QUALITY: stable
-      CI_BUILD: 'yes'
-      OS_NAME: windows
-      SHOULD_BUILD: 'yes'
-      SHOULD_BUILD_REH: 'no'
-      SHOULD_BUILD_REH_WEB: 'no'
-
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ needs.prepare.outputs.head_sha }}
-
-      - name: Setup GCC
-        uses: egor-tensin/setup-gcc@v1
-        with:
-          version: 10
-          platform: x64
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version-file: '.nvmrc'
-
-      - name: Setup Python 3
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-
-      - name: Install libkrb5-dev
-        run: sudo apt-get update -y && sudo apt-get install -y libkrb5-dev
-
-      - name: Clone VSCode repo
-        run: ./get_repo.sh
-
-      - name: Build
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: ./build.sh
-
-      - name: Compress vscode artifact
-        run: |
-          find vscode -type f \
-            -not -path "*/node_modules/*" \
-            -not -path "vscode/.build/node/*" \
-            -not -path "vscode/.git/*" > vscode.txt
-          [ -d "vscode/.build/extensions/node_modules" ] && echo "vscode/.build/extensions/node_modules" >> vscode.txt
-          echo "vscode/.git" >> vscode.txt
-          tar -czf vscode.tar.gz -T vscode.txt
-
-      - name: Upload vscode artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: vscode-compiled
-          path: ./vscode.tar.gz
-          retention-days: 1
-
-  build-windows:
-    needs: [prepare, compile-windows]
-    runs-on: windows-2022
-    defaults:
-      run:
-        shell: bash
-    env:
-      APP_NAME: Codex Beta
-      BINARY_NAME: codex-beta
-      RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
-      CUSTOM_RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
-      VSCODE_ARCH: x64
-      VSCODE_QUALITY: stable
-
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ needs.prepare.outputs.head_sha }}
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version-file: '.nvmrc'
-
-      - name: Setup Python 3
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-
-      - name: Download compiled vscode
-        uses: actions/download-artifact@v4
-        with:
-          name: vscode-compiled
-
-      - name: Extract vscode artifact
-        run: tar -xzf vscode.tar.gz
-
-      - name: Build Windows package
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          npm_config_arch: x64
-          npm_config_target_arch: x64
-        run: ./build/windows/package.sh
-
-      - name: Prepare assets
-        run: ./prepare_assets.sh
-
-      - name: Upload Windows artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: windows-x64
-          path: |
-            assets/*.exe
-            assets/*.msi
-          retention-days: 3
+  # Windows build is disabled pending fixes to the cross-compile pipeline.
+  #
+  # Root causes identified so far (both fixed in env vars but not yet validated):
+  #
+  # 1. OS_NAME not set → prepare_vscode.sh evaluates "../patches/${OS_NAME}/" as
+  #    "../patches//" which matches the root patches dir, causing all patches to be
+  #    applied twice. The second application of add-remote-url.patch (and others)
+  #    fails because the files were already modified. Fix: OS_NAME: windows.
+  #
+  # 2. CI_BUILD not set → get-extensions.sh sources `set -euo pipefail` into the
+  #    calling shell, enabling nounset (-u). build.sh line 44 then hits
+  #    "${CI_BUILD}: unbound variable". Fix: CI_BUILD: 'yes' (also correctly
+  #    skips local packaging, which is handled by the separate build-windows job).
+  #
+  # After those two env vars are confirmed working, the next unknown is whether
+  # build.sh completes compilation cleanly and produces a valid vscode artifact
+  # that the build-windows packaging job can consume.
+  #
+  # compile-windows:
+  #   needs: prepare
+  #   runs-on: ubuntu-22.04
+  #   env:
+  #     APP_NAME: Codex Beta
+  #     BINARY_NAME: codex-beta
+  #     RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
+  #     CUSTOM_RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
+  #     VSCODE_ARCH: x64
+  #     VSCODE_QUALITY: stable
+  #     CI_BUILD: 'yes'
+  #     OS_NAME: windows
+  #     SHOULD_BUILD: 'yes'
+  #     SHOULD_BUILD_REH: 'no'
+  #     SHOULD_BUILD_REH_WEB: 'no'
+  #
+  #   steps:
+  #     - uses: actions/checkout@v4
+  #       with:
+  #         ref: ${{ needs.prepare.outputs.head_sha }}
+  #
+  #     - name: Setup GCC
+  #       uses: egor-tensin/setup-gcc@v1
+  #       with:
+  #         version: 10
+  #         platform: x64
+  #
+  #     - name: Setup Node.js
+  #       uses: actions/setup-node@v4
+  #       with:
+  #         node-version-file: '.nvmrc'
+  #
+  #     - name: Setup Python 3
+  #       uses: actions/setup-python@v5
+  #       with:
+  #         python-version: '3.11'
+  #
+  #     - name: Install libkrb5-dev
+  #       run: sudo apt-get update -y && sudo apt-get install -y libkrb5-dev
+  #
+  #     - name: Clone VSCode repo
+  #       run: ./get_repo.sh
+  #
+  #     - name: Build
+  #       env:
+  #         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+  #       run: ./build.sh
+  #
+  #     - name: Compress vscode artifact
+  #       run: |
+  #         find vscode -type f \
+  #           -not -path "*/node_modules/*" \
+  #           -not -path "vscode/.build/node/*" \
+  #           -not -path "vscode/.git/*" > vscode.txt
+  #         [ -d "vscode/.build/extensions/node_modules" ] && echo "vscode/.build/extensions/node_modules" >> vscode.txt
+  #         echo "vscode/.git" >> vscode.txt
+  #         tar -czf vscode.tar.gz -T vscode.txt
+  #
+  #     - name: Upload vscode artifact
+  #       uses: actions/upload-artifact@v4
+  #       with:
+  #         name: vscode-compiled
+  #         path: ./vscode.tar.gz
+  #         retention-days: 1
+  #
+  # build-windows:
+  #   needs: [prepare, compile-windows]
+  #   runs-on: windows-2022
+  #   defaults:
+  #     run:
+  #       shell: bash
+  #   env:
+  #     APP_NAME: Codex Beta
+  #     BINARY_NAME: codex-beta
+  #     RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
+  #     CUSTOM_RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
+  #     VSCODE_ARCH: x64
+  #     VSCODE_QUALITY: stable
+  #
+  #   steps:
+  #     - uses: actions/checkout@v4
+  #       with:
+  #         ref: ${{ needs.prepare.outputs.head_sha }}
+  #
+  #     - name: Setup Node.js
+  #       uses: actions/setup-node@v4
+  #       with:
+  #         node-version-file: '.nvmrc'
+  #
+  #     - name: Setup Python 3
+  #       uses: actions/setup-python@v5
+  #       with:
+  #         python-version: '3.11'
+  #
+  #     - name: Download compiled vscode
+  #       uses: actions/download-artifact@v4
+  #       with:
+  #         name: vscode-compiled
+  #
+  #     - name: Extract vscode artifact
+  #       run: tar -xzf vscode.tar.gz
+  #
+  #     - name: Build Windows package
+  #       env:
+  #         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+  #         npm_config_arch: x64
+  #         npm_config_target_arch: x64
+  #       run: ./build/windows/package.sh
+  #
+  #     - name: Prepare assets
+  #       run: ./prepare_assets.sh
+  #
+  #     - name: Upload Windows artifacts
+  #       uses: actions/upload-artifact@v4
+  #       with:
+  #         name: windows-x64
+  #         path: |
+  #           assets/*.exe
+  #           assets/*.msi
+  #         retention-days: 3
 
   release:
-    needs: [prepare, build-macos, build-windows]
+    needs: [prepare, build-macos]
     runs-on: ubuntu-latest
     env:
       GH_TOKEN: ${{ secrets.STRONGER_GITHUB_TOKEN }}
@@ -241,9 +259,7 @@ jobs:
             --prerelease \
             --title "Codex Beta $VERSION" \
             --generate-notes \
-            artifacts/macos-arm64/*.dmg \
-            artifacts/windows-x64/*.exe \
-            artifacts/windows-x64/*.msi
+            artifacts/macos-arm64/*.dmg
 
       - name: Comment on PR
         env:
