@@ -145,7 +145,7 @@ export class CodexSideloaderContribution extends Disposable implements IWorkbenc
 			}
 
 			try {
-				await this.extensionManagementService.installFromGallery(galleryExt);
+				await this.extensionManagementService.installFromGallery(galleryExt, { isMachineScoped: true });
 				this.logService.info(`${TAG} Installed "${id}" v${galleryExt.version}`);
 			} catch (err) {
 				this.logService.error(`${TAG} Failed to install "${id}"`, err);
@@ -173,6 +173,7 @@ export class CodexSideloaderContribution extends Disposable implements IWorkbenc
 				await channel.call('install', [URI.parse(entry.vsix), {
 					installGivenVersion: true,
 					pinned: true,
+					isMachineScoped: true,
 					profileLocation: this.userDataProfilesService.defaultProfile.extensionsResource,
 				}]);
 				this.logService.info(`${TAG} Installed "${entry.id}" from VSIX ${entry.vsix}`);
