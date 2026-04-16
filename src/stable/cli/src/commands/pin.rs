@@ -13,6 +13,7 @@ use std::{
 	fs,
 	io::Read,
 	path::{Path, PathBuf},
+	process::Command,
 };
 
 use super::context::CommandContext;
@@ -64,6 +65,8 @@ pub async fn pin(ctx: CommandContext, args: PinArgs) -> Result<i32, AnyError> {
 		}
 		(Some(p), Some(PinSubcommand::Add(add_args))) => add_pin(ctx, p.clone(), add_args.clone()).await?,
 		(Some(p), Some(PinSubcommand::Remove(remove_args))) => remove_pin(ctx, p.clone(), remove_args.clone())?,
+		(Some(p), Some(PinSubcommand::Reset)) => reset_pin(ctx, p.clone())?,
+		(Some(p), Some(PinSubcommand::Sync)) => sync_pin(ctx, p.clone()).await?,
 	}
 
 	Ok(0)
@@ -132,12 +135,32 @@ fn truncate_url(url: &str) -> String {
 	}
 }
 
+fn has_git() -> bool {
+	Command::new("git").arg("--version").output().is_ok()
+}
+
+fn is_metadata_dirty(project_path: &Path) -> bool {
+	Command::new("git")
+		.arg("status")
+		.arg("--porcelain")
+		.arg("metadata.json")
+		.current_dir(project_path)
+		.output()
+		.map(|o| !o.stdout.is_empty())
+		.unwrap_or(false)
+}
+
 fn list_pins(ctx: &CommandContext, project_filter: Option<ProjectInfo>) -> Result<(), AnyError> {
 	let projects = if let Some(p) = project_filter {
 		vec![p]
 	} else {
 		discover_projects(ctx)?
 	};
+
+	let git_available = has_git();
+	if !git_available {
+		println!("Warning: 'git' not found in PATH. Skipping dirty checks.");
+	}
 
 	for project in projects {
 		println!(
@@ -162,7 +185,11 @@ fn list_pins(ctx: &CommandContext, project_filter: Option<ProjectInfo>) -> Resul
 		pinned_ids.sort();
 		for id in pinned_ids {
 			let pin = &project.metadata.meta.pinned_extensions[id];
-			println!("  📌 {} {} {}", id, pin.version, truncate_url(&pin.url));
+			println!("  📌 {} {} {}", id, pin.version, pin.url);
+		}
+
+		if git_available && is_metadata_dirty(&project.path) {
+			println!("  📤 metadata.json has changes, please sync or reset: codex-cli pin {} sync", project.metadata.project_id);
 		}
 		println!();
 	}
@@ -172,6 +199,8 @@ fn list_pins(ctx: &CommandContext, project_filter: Option<ProjectInfo>) -> Resul
 	println!("  codex pin <project>               List pins for a project");
 	println!("  codex pin <project> add <url>     Add a version pin");
 	println!("  codex pin <project> remove <id>   Remove a version pin");
+	println!("  codex pin <project> reset         Undo metadata.json changes");
+	println!("  codex pin <project> sync          Sync pin changes with remote");
 
 	Ok(())
 }
@@ -362,6 +391,106 @@ fn remove_pin(ctx: CommandContext, project_id: String, args: PinRemoveArgs) -> R
 		log::emit(log::Level::Info, "pin", &format!("✔ Removed pin for {}", args.id));
 	} else {
 		log::emit(log::Level::Warn, "pin", &format!("No pin found for {} in project {}", args.id, project_info.metadata.project_name));
+	}
+
+	Ok(())
+}
+
+fn reset_pin(ctx: CommandContext, project_id: String) -> Result<(), AnyError> {
+	if !has_git() {
+		return Err(AnyError::PinningError(PinningError("'git' not found in PATH".to_string())));
+	}
+
+	let project_info = resolve_project(&ctx, &project_id)?;
+
+	log::emit(log::Level::Info, "pin", &format!("Resetting metadata.json for {}...", project_info.metadata.project_name));
+
+	let status = Command::new("git")
+		.arg("checkout")
+		.arg("--")
+		.arg("metadata.json")
+		.current_dir(&project_info.path)
+		.status()
+		.map_err(|e| wrap(e, "Failed to execute git checkout"))?;
+
+	if !status.success() {
+		return Err(AnyError::PinningError(PinningError(format!("git checkout failed with exit code {}", status.code().unwrap_or(-1)))));
+	}
+
+	log::emit(log::Level::Info, "pin", "✔ Reset successful");
+	Ok(())
+}
+
+async fn sync_pin(ctx: CommandContext, project_id: String) -> Result<(), AnyError> {
+	if !has_git() {
+		return Err(AnyError::PinningError(PinningError("'git' not found in PATH".to_string())));
+	}
+
+	let project_info = resolve_project(&ctx, &project_id)?;
+
+	if is_metadata_dirty(&project_info.path) {
+		log::emit(log::Level::Info, "pin", &format!("Syncing changes for {}...", project_info.metadata.project_name));
+
+		// git add metadata.json
+		let status = Command::new("git")
+			.arg("add")
+			.arg("metadata.json")
+			.current_dir(&project_info.path)
+			.status()
+			.map_err(|e| wrap(e, "Failed to execute git add"))?;
+		if !status.success() {
+			return Err(AnyError::PinningError(PinningError("git add failed".to_string())));
+		}
+
+		// git commit -m "Update extension pins"
+		let status = Command::new("git")
+			.arg("commit")
+			.arg("-m")
+			.arg("Update extension pins")
+			.current_dir(&project_info.path)
+			.status()
+			.map_err(|e| wrap(e, "Failed to execute git commit"))?;
+		if !status.success() {
+			return Err(AnyError::PinningError(PinningError("git commit failed".to_string())));
+		}
+
+		// git pull --rebase
+		let status = Command::new("git")
+			.arg("pull")
+			.arg("--rebase")
+			.current_dir(&project_info.path)
+			.status()
+			.map_err(|e| wrap(e, "Failed to execute git pull"))?;
+		if !status.success() {
+			return Err(AnyError::PinningError(PinningError("git pull --rebase failed".to_string())));
+		}
+
+		// git push
+		let status = Command::new("git")
+			.arg("push")
+			.current_dir(&project_info.path)
+			.status()
+			.map_err(|e| wrap(e, "Failed to execute git push"))?;
+		if !status.success() {
+			return Err(AnyError::PinningError(PinningError("git push failed".to_string())));
+		}
+
+		log::emit(log::Level::Info, "pin", "✔ Sync successful");
+	} else {
+		log::emit(log::Level::Info, "pin", &format!("No local changes to sync for {}. Fetching remote updates...", project_info.metadata.project_name));
+
+		// git pull --rebase
+		let status = Command::new("git")
+			.arg("pull")
+			.arg("--rebase")
+			.current_dir(&project_info.path)
+			.status()
+			.map_err(|e| wrap(e, "Failed to execute git pull"))?;
+		if !status.success() {
+			return Err(AnyError::PinningError(PinningError("git pull --rebase failed".to_string())));
+		}
+
+		log::emit(log::Level::Info, "pin", "✔ Sync successful");
 	}
 
 	Ok(())

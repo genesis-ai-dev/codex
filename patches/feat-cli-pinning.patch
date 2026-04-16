@@ -23,7 +23,7 @@ diff --git a/cli/src/commands/args.rs b/cli/src/commands/args.rs
 index 6301bdd..692e06b 100644
 --- a/cli/src/commands/args.rs
 +++ b/cli/src/commands/args.rs
-@@ -154,2 +154,35 @@ pub enum StandaloneCommands {
+@@ -154,2 +154,39 @@ pub enum StandaloneCommands {
  	Update(StandaloneUpdateArgs),
 +	/// Manage extension version pins for Codex projects.
 +	Pin(PinArgs),
@@ -46,6 +46,10 @@ index 6301bdd..692e06b 100644
 +	Add(PinAddArgs),
 +	/// Remove a version pin.
 +	Remove(PinRemoveArgs),
++	/// Undo metadata.json changes.
++	Reset,
++	/// Sync pin changes with remote.
++	Sync,
 +}
 +
 +#[derive(Args, Debug, Clone)]
