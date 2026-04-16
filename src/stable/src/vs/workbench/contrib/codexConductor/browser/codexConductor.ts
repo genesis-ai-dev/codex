@@ -84,6 +84,11 @@ export class CodexConductorContribution extends Disposable implements IWorkbench
 			this.storageService.remove(ADMIN_PINNED_EXTENSIONS_KEY, StorageScope.WORKSPACE);
 		}));
 
+		this._register(CommandsRegistry.registerCommand('codex.conductor.hasAdminPinIntent', () => {
+			const raw = this.storageService.get(ADMIN_PINNED_EXTENSIONS_KEY, StorageScope.WORKSPACE);
+			return !!raw;
+		}));
+
 		this._register(CommandsRegistry.registerCommand('codex.conductor.setRemotePins', (_accessor, pins: PinnedExtensions | null | undefined) => {
 			if (pins && Object.keys(pins).length > 0) {
 				this.storageService.store(REMOTE_PINNED_EXTENSIONS_KEY, JSON.stringify(pins), StorageScope.WORKSPACE, StorageTarget.MACHINE);
