@@ -184,7 +184,7 @@ Enforces project-scoped extension version pins. Reads `pinnedExtensions` from pr
 **Overlay:** `src/stable/cli/src/commands/pin.rs`
 **Patch:** `patches/feat-cli-pinning.patch` (registers the `pin` subcommand in args/argv, adds `PinningError`, refactors macOS shell command install for `codex-cli` symlink)
 
-Adds `codex pin list/add/remove` to the Rust CLI. The `add` command downloads a remote VSIX, extracts the extension ID and version, and writes the pin to `metadata.json`.
+Adds `codex pin list/add/remove/sync/reset` to the Rust CLI. The `add` command downloads a remote VSIX, extracts the extension ID and version, and writes the pin to `metadata.json`. The `sync` command stages and commits `metadata.json` locally for the next Frontier sync. The `reset` command discards uncommitted pin changes via `git checkout -- metadata.json`.
 
 ### Extension Bundling
 

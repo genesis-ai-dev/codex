@@ -179,13 +179,17 @@ export class CodexConductorContribution extends Disposable implements IWorkbench
 		this.lastSeenPinsSnapshot = currentSnapshot;
 
 		if (!currentSnapshot) {
-			// Pins were removed — prompt a simple reload to revert profile
+			// Pins were removed — prompt reload to revert to default profile.
+			// Use switchProfileAndReload() so the workspace-profile association
+			// is persisted (not just the immediate reload target).
+			const defaultProfile = this.userDataProfilesService.profiles.find(p => p.isDefault);
+			if (!defaultProfile) { return; }
 			this.notificationService.prompt(
 				Severity.Info,
 				'Extension version pins have been removed. Reload to revert to the default profile.',
 				[{
 					label: 'Reload Codex',
-					run: () => this.hostService.reload()
+					run: () => this.switchProfileAndReload(defaultProfile)
 				}]
 			);
 			return;
@@ -205,13 +209,14 @@ export class CodexConductorContribution extends Disposable implements IWorkbench
 		const existingProfile = this.userDataProfilesService.profiles.find(p => p.name === targetProfileName);
 
 		if (existingProfile) {
-			// Profile already exists — just prompt reload
+			// Profile already exists — prompt reload via switchProfileAndReload()
+			// which persists the workspace-profile association before reloading.
 			this.notificationService.prompt(
 				Severity.Info,
 				'Pinned extension installed. Reload to apply.',
 				[{
 					label: 'Reload Codex',
-					run: () => this.hostService.reload()
+					run: () => this.switchProfileAndReload(existingProfile)
 				}]
 			);
 			return;
@@ -251,7 +256,7 @@ export class CodexConductorContribution extends Disposable implements IWorkbench
 
 			if (reloadWhenReady) {
 				// User already opted in — reload immediately
-				this.hostService.reload();
+				await this.switchProfileAndReload(profile);
 			} else {
 				// Show completion notification with reload button
 				this.notificationService.prompt(
@@ -259,7 +264,7 @@ export class CodexConductorContribution extends Disposable implements IWorkbench
 					'Pinned extension installed. Reload to apply.',
 					[{
 						label: 'Reload Codex',
-						run: () => this.hostService.reload()
+						run: () => this.switchProfileAndReload(profile)
 					}]
 				);
 			}
@@ -325,7 +330,15 @@ export class CodexConductorContribution extends Disposable implements IWorkbench
 	 */
 	private async readPinsSnapshot(): Promise<string | undefined> {
 		const pins = await this.readEffectivePinsInternal();
-		return pins ? JSON.stringify(pins) : undefined;
+		if (!pins) { return undefined; }
+		// Canonicalize both top-level key order and nested entry field order
+		// so the snapshot is stable regardless of parse/write iteration order.
+		const sorted = Object.keys(pins).sort().reduce<PinnedExtensions>((acc, k) => {
+			const e = pins[k];
+			acc[k] = { url: e.url, version: e.version };
+			return acc;
+		}, {});
+		return JSON.stringify(sorted);
 	}
 
 	private async logStartupExtensionState(): Promise<void> {
