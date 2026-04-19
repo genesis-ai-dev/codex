@@ -113,10 +113,12 @@ fn read_metadata(path: &Path) -> Result<ProjectMetadata, AnyError> {
 }
 
 fn write_metadata(path: &Path, metadata: &ProjectMetadata) -> Result<(), AnyError> {
-	let file = fs::File::create(path).map_err(|e| wrap(e, "Failed to create metadata.json"))?;
+	use std::io::Write;
+	let mut file = fs::File::create(path).map_err(|e| wrap(e, "Failed to create metadata.json"))?;
 	let formatter = serde_json::ser::PrettyFormatter::with_indent(b"    ");
-	let mut ser = serde_json::Serializer::with_formatter(file, formatter);
+	let mut ser = serde_json::Serializer::with_formatter(&mut file, formatter);
 	metadata.serialize(&mut ser).map_err(|e| wrap(e, "Failed to write metadata.json"))?;
+	file.write_all(b"\n").map_err(|e| wrap(e, "Failed to write trailing newline"))?;
 	Ok(())
 }
 
@@ -294,14 +296,7 @@ async fn add_pin(ctx: CommandContext, project_id: String, args: PinAddArgs) -> R
 
 	log::emit(log::Level::Info, "pin", &format!("Inspecting VSIX at {}...", truncate_url(&resolved_url)));
 
-	// Optimized VSIX metadata extraction using Range requests
-	let (extension_id, version) = match get_vsix_metadata_smart(&ctx.http, &resolved_url).await {
-		Ok(meta) => meta,
-		Err(e) => {
-			log::emit(log::Level::Warn, "pin", &format!("Range request optimization not available, using full download: {}", e));
-			get_vsix_metadata_full(&ctx.http, &resolved_url).await?
-		}
-	};
+	let (extension_id, version) = get_vsix_metadata_full(&ctx.http, &resolved_url).await?;
 
 	log::emit(log::Level::Info, "pin", &format!("✔ Identified: {} (v{})", extension_id, version));
 
@@ -323,26 +318,25 @@ async fn add_pin(ctx: CommandContext, project_id: String, args: PinAddArgs) -> R
 	Ok(())
 }
 
-async fn get_vsix_metadata_smart(client: &reqwest::Client, url: &str) -> Result<(String, String), AnyError> {
-	// 1. Get content length
-	let head = client.head(url).send().await?.error_for_status()?;
-	let content_length = head.headers()
-		.get(reqwest::header::CONTENT_LENGTH)
-		.and_then(|v| v.to_str().ok())
-		.and_then(|s| s.parse::<u64>().ok())
-		.ok_or_else(|| AnyError::PinningError(PinningError("Missing Content-Length header".to_string())))?;
-
-	// 2. Fetch the last 16KB (contains the central directory index)
-	let range_size = 16 * 1024;
-	let start = if content_length > range_size { content_length - range_size } else { 0 };
-	let _res = client.get(url)
-		.header(reqwest::header::RANGE, format!("bytes={}-{}", start, content_length - 1))
-		.send().await?.error_for_status()?;
-	
-	// Implementation of Range-based parsing would go here.
-	// For now, we return an error to trigger the full download fallback.
-	Err(AnyError::PinningError(PinningError("Range request optimization not fully implemented yet".to_string())))
-}
+// TODO: Range-based VSIX metadata extraction.
+//
+// The idea is to avoid downloading the entire VSIX (~50 MB) just to read
+// extension/package.json (~2 KB). ZIP's central directory is stored at the
+// end of the file, so fetching the last ~16 KB via an HTTP Range request
+// would give us the file index. From that we could locate the
+// extension/package.json entry and fetch only its byte range.
+//
+// Steps that would be needed:
+//   1. HEAD request → get Content-Length
+//   2. GET with Range: bytes=(len-16384)-(len-1) → central directory
+//   3. Parse the EOCD / CD entries to find extension/package.json offset+size
+//   4. GET with Range for just that entry → decompress → parse JSON
+//
+// Removed the previous stub (get_vsix_metadata_smart) because it was making
+// real HEAD + Range requests to GitHub on every `pin add` invocation and then
+// unconditionally falling through to the full download anyway — wasting two
+// round-trips per call. Until the CD parsing is implemented, we call
+// get_vsix_metadata_full() directly.
 
 async fn get_vsix_metadata_full(client: &reqwest::Client, url: &str) -> Result<(String, String), AnyError> {
 	let response = client.get(url).send().await?.error_for_status()?;
