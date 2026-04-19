@@ -56,7 +56,7 @@ jobs:
               owner: context.repo.owner,
               repo: context.repo.repo,
               comment_id: context.payload.comment.id,
-              content: 'rocket',
+              content: '+1',
             });
 
       - uses: actions/checkout@v4
@@ -278,4 +278,37 @@ jobs:
         run: |
           RELEASE_URL="https://github.com/${{ github.repository }}/releases/tag/${VERSION}"
           gh pr comment "${{ needs.prepare.outputs.pr_number }}" \
-            --body "Pre-release build ready: [$VERSION]($RELEASE_URL)"
+            --body "Pre-release: ${VERSION} ${RELEASE_URL}"
+
+      - name: React with rocket on success
+        if: success() && github.event_name == 'issue_comment'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh api "repos/${{ github.repository }}/issues/comments/${{ github.event.comment.id }}/reactions" \
+            --method POST -f content='rocket'
+
+  notify-failure:
+    needs: [prepare, build-macos, release]
+    if: always() && contains(needs.*.result, 'failure')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Handle failure
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          RUN_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          if [ "${{ github.event_name }}" = "issue_comment" ]; then
+            PR_NUMBER="${{ github.event.issue.number }}"
+          else
+            PR_NUMBER="${{ inputs.pr_number }}"
+          fi
+          
+          if [[ -n "$PR_NUMBER" ]]; then
+            gh pr comment "${PR_NUMBER}" --body "Build failed: ${RUN_URL}"
+          fi
+          
+          if [ "${{ github.event_name }}" = "issue_comment" ]; then
+            gh api "repos/${{ github.repository }}/issues/comments/${{ github.event.comment.id }}/reactions" \
+              --method POST -f content='-1'
+          fi
