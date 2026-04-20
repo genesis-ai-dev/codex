@@ -208,8 +208,8 @@ export class CodexConductorContribution extends Disposable implements IWorkbench
 		const targetProfileName = this.resolveProfileName(pins);
 		const existingProfile = this.userDataProfilesService.profiles.find(p => p.name === targetProfileName);
 
-		if (existingProfile) {
-			// Profile already exists — prompt reload via switchProfileAndReload()
+		if (existingProfile && await this.validateProfileExtensions(existingProfile, pins)) {
+			// Profile already exists and is complete — prompt reload via switchProfileAndReload()
 			// which persists the workspace-profile association before reloading.
 			this.notificationService.prompt(
 				Severity.Info,
@@ -222,7 +222,11 @@ export class CodexConductorContribution extends Disposable implements IWorkbench
 			return;
 		}
 
-		// Profile doesn't exist — download and install, then prompt.
+		if (existingProfile) {
+			this.logService.warn(`[CodexConductor] Profile "${targetProfileName}" exists but is missing pinned extensions — repairing`);
+		}
+
+		// Profile doesn't exist or is incomplete — download and install, then prompt.
 		// Show progress notification with "Reload Codex When Ready" option.
 		let reloadWhenReady = false;
 
@@ -237,17 +241,22 @@ export class CodexConductorContribution extends Disposable implements IWorkbench
 		handle.progress.infinite();
 
 		try {
-			const profile = await this.userDataProfilesService.createNamedProfile(targetProfileName, { icon: CONDUCTOR_PROFILE_ICON });
+			// Reuse the existing incomplete profile or create a new one.
+			const profile = existingProfile
+				?? await this.userDataProfilesService.createNamedProfile(targetProfileName, { icon: CONDUCTOR_PROFILE_ICON });
 
 			try {
 				await this.installPinnedExtensions(pins, profile);
 			} catch (e: unknown) {
 				// Installation failed after all retries — cleanup the incomplete profile
-				try {
-					await this.userDataProfilesService.removeProfile(profile);
-					this.logService.info(`[CodexConductor] Cleaned up incomplete profile "${targetProfileName}" after installation failure`);
-				} catch (cleanupError) {
-					this.logService.warn(`[CodexConductor] Failed to clean up incomplete profile "${targetProfileName}": ${cleanupError}`);
+				// (only if it's not the current profile, which cannot be deleted).
+				if (profile.id !== this.userDataProfileService.currentProfile.id) {
+					try {
+						await this.userDataProfilesService.removeProfile(profile);
+						this.logService.info(`[CodexConductor] Cleaned up incomplete profile "${targetProfileName}" after installation failure`);
+					} catch (cleanupError) {
+						this.logService.warn(`[CodexConductor] Failed to clean up incomplete profile "${targetProfileName}": ${cleanupError}`);
+					}
 				}
 				throw e;
 			}
@@ -504,25 +513,32 @@ export class CodexConductorContribution extends Disposable implements IWorkbench
 
 		const existingProfile = this.userDataProfilesService.profiles.find(p => p.name === targetProfileName);
 		if (existingProfile) {
-			// Profile already exists with the correct name — the name is deterministic
-			// ({shortName}-v{version}) so a name match guarantees the correct extensions
-			// are installed. Skip download/install and just switch.
-			this.logService.info(`[CodexConductor] Profile "${targetProfileName}" already exists — switching without download`);
-			await this.switchProfileAndReload(existingProfile);
-			return;
+			if (await this.validateProfileExtensions(existingProfile, pins)) {
+				// Profile is complete — just switch.
+				this.logService.info(`[CodexConductor] Profile "${targetProfileName}" already exists and is complete — switching without download`);
+				await this.switchProfileAndReload(existingProfile);
+				return;
+			}
+			// Profile exists but is incomplete (interrupted install?) — repair it.
+			this.logService.warn(`[CodexConductor] Profile "${targetProfileName}" exists but is missing pinned extensions — repairing`);
 		}
 
-		const profile = await this.userDataProfilesService.createNamedProfile(targetProfileName, { icon: CONDUCTOR_PROFILE_ICON });
+		// Reuse the existing incomplete profile or create a new one.
+		const profile = existingProfile
+			?? await this.userDataProfilesService.createNamedProfile(targetProfileName, { icon: CONDUCTOR_PROFILE_ICON });
 
 		try {
 			await this.installPinnedExtensions(pins, profile);
 		} catch (e: unknown) {
 			// Installation failed after all retries — cleanup the incomplete profile
-			try {
-				await this.userDataProfilesService.removeProfile(profile);
-				this.logService.info(`[CodexConductor] Cleaned up incomplete profile "${targetProfileName}" after installation failure`);
-			} catch (cleanupError) {
-				this.logService.warn(`[CodexConductor] Failed to clean up incomplete profile "${targetProfileName}": ${cleanupError}`);
+			// (only if it's not the current profile, which cannot be deleted).
+			if (profile.id !== this.userDataProfileService.currentProfile.id) {
+				try {
+					await this.userDataProfilesService.removeProfile(profile);
+					this.logService.info(`[CodexConductor] Cleaned up incomplete profile "${targetProfileName}" after installation failure`);
+				} catch (cleanupError) {
+					this.logService.warn(`[CodexConductor] Failed to clean up incomplete profile "${targetProfileName}": ${cleanupError}`);
+				}
 			}
 
 			this.notificationService.prompt(
@@ -756,6 +772,28 @@ export class CodexConductorContribution extends Disposable implements IWorkbench
 	}
 
 	// ── Utilities ──────────────────────────────────────────────────────
+
+	/**
+	 * Validates that all pinned extensions are actually installed in the given
+	 * profile. Uses `getInstalled(type, profileLocation)` to inspect a profile's
+	 * extensions without switching to it. Returns false if any pinned extension
+	 * is missing or at the wrong version (e.g. interrupted install left an
+	 * incomplete profile).
+	 */
+	private async validateProfileExtensions(profile: IUserDataProfile, pins: PinnedExtensions): Promise<boolean> {
+		try {
+			const installed = await this.extensionManagementService.getInstalled(undefined, profile.extensionsResource);
+			for (const [id, pin] of Object.entries(pins)) {
+				const ext = installed.find(e => e.identifier.id.toLowerCase() === id.toLowerCase());
+				if (!ext || ext.manifest.version !== pin.version) {
+					return false;
+				}
+			}
+			return true;
+		} catch {
+			return false;
+		}
+	}
 
 	private resolveProfileName(pins: PinnedExtensions): string {
 		const ids = Object.keys(pins).sort();
