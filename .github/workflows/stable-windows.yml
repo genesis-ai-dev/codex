@@ -43,6 +43,8 @@ jobs:
       RELEASE_VERSION: ${{ env.RELEASE_VERSION }}
       SHOULD_BUILD: ${{ env.SHOULD_BUILD }}
       SHOULD_DEPLOY: ${{ env.SHOULD_DEPLOY }}
+      PATCH_REBUILD: ${{ env.PATCH_REBUILD }}
+      CUSTOM_RELEASE_VERSION: ${{ env.CUSTOM_RELEASE_VERSION }}
 
     steps:
       - uses: actions/checkout@v4
@@ -164,6 +166,8 @@ jobs:
       RELEASE_VERSION: ${{ needs.check.outputs.RELEASE_VERSION }}
       SHOULD_BUILD: ${{ (needs.check.outputs.SHOULD_BUILD == 'yes' || github.event.inputs.generate_assets == 'true') && 'yes' || 'no' }}
       SHOULD_DEPLOY: ${{ needs.check.outputs.SHOULD_DEPLOY }}
+      PATCH_REBUILD: ${{ needs.check.outputs.PATCH_REBUILD }}
+      CUSTOM_RELEASE_VERSION: ${{ needs.check.outputs.CUSTOM_RELEASE_VERSION }}
       VSCODE_ARCH: ${{ matrix.vscode_arch }}
     outputs:
       RELEASE_VERSION: ${{ env.RELEASE_VERSION }}
