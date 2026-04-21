@@ -38,16 +38,19 @@ index 6301bdd..692e06b 100644
 +	pub subcommand: Option<PinSubcommand>,
 +}
 +
-#[derive(Subcommand, Debug, Clone)]
-pub enum PinSubcommand {
-       /// List pins for the project (default).
-       List,
-       /// Pin an extension to a specific version via VSIX URL.
-       Add(PinAddArgs),
-       /// Remove a version pin.
-       Remove(PinRemoveArgs),
-}
-
++#[derive(Subcommand, Debug, Clone)]
++pub enum PinSubcommand {
++	/// List pins for the project (default).
++	List,
++	/// Pin an extension to a specific version via VSIX URL.
++	Add(PinAddArgs),
++	/// Remove a version pin.
++	Remove(PinRemoveArgs),
++	/// Undo metadata.json changes.
++	Reset,
++	/// Sync pin changes with remote.
++	Sync,
++}
 +
 +#[derive(Args, Debug, Clone)]
 +pub struct PinAddArgs {
