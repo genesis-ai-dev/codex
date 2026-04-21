@@ -19,7 +19,7 @@ TUNNEL_APPLICATION_NAME="$(node -p "require(\"../product.json\").tunnelApplicati
 NAME_SHORT="$(node -p "require(\"../product.json\").nameShort")"
 
 npm pack @vscode/openssl-prebuilt@0.0.11
-mkdir openssl
+mkdir -p openssl
 tar -xvzf vscode-openssl-prebuilt-0.0.11.tgz --strip-components=1 --directory=openssl
 
 if [[ "${OS_NAME}" == "osx" ]]; then
