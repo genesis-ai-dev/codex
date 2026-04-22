@@ -33,7 +33,7 @@ index 2c3b710..121e545 100644
 +				_: [],
 +				'disable-extensions': options?.disableExtensions,
 +				'profile': options?.forceProfile
-+			} as any);
++			});
  		}
  	}
  
