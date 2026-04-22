@@ -858,16 +858,11 @@ export class CodexConductorContribution extends Disposable implements IWorkbench
 
 		// Explicitly set the association for the workspace.
 		// For folder workspaces, this is the primary way VS Code associates a profile.
+		// updateProfile() cascades — assigning the workspace to this profile implicitly
+		// removes it from any other profile that still claims it, so no pre-cleanup is
+		// required. (Previously called resetWorkspaces() here, but that wiped every
+		// open project's associations globally.)
 		this.logService.info(`[CodexConductor] Calling setProfileForWorkspace...`);
-
-		// First, clear any existing associations for this workspace to prevent duplicates
-		// that could cause lookup confusion in the Main process.
-		try {
-			await this.userDataProfilesService.resetWorkspaces();
-		} catch {
-			// Best effort
-		}
-
 		await this.userDataProfilesService.setProfileForWorkspace(workspaceIdentifier, profile);
 		this.logService.info(`[CodexConductor] setProfileForWorkspace completed`);
 
