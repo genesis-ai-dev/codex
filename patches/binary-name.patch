@@ -1,5 +1,5 @@
 diff --git a/build/gulpfile.vscode.ts b/build/gulpfile.vscode.ts
-index d3ab651..63cd71f 100644
+index ac70ecb..9b7c25f 100644
 --- a/build/gulpfile.vscode.ts
 +++ b/build/gulpfile.vscode.ts
 @@ -369,3 +369,3 @@ function packageTask(platform: string, arch: string, sourceFolderName: string, d
@@ -7,6 +7,45 @@ index d3ab651..63cd71f 100644
 -				.pipe(rename('bin/code'));
 +				.pipe(rename('bin/' + product.applicationName));
  			const policyDest = gulp.src('.build/policies/darwin/**', { base: '.build/policies/darwin' })
+diff --git a/cli/src/desktop/version_manager.rs b/cli/src/desktop/version_manager.rs
+index e9cd1a1..535c403 100644
+--- a/cli/src/desktop/version_manager.rs
++++ b/cli/src/desktop/version_manager.rs
+@@ -11,2 +11,3 @@ use std::{
+ 
++use const_format::concatcp;
+ use lazy_static::lazy_static;
+@@ -16,3 +17,3 @@ use serde::{Deserialize, Serialize};
+ use crate::{
+-	constants::{PRODUCT_DOWNLOAD_URL, QUALITY, QUALITYLESS_PRODUCT_NAME},
++	constants::{APPLICATION_NAME, PRODUCT_DOWNLOAD_URL, QUALITY, QUALITYLESS_PRODUCT_NAME},
+ 	log,
+@@ -245,3 +246,3 @@ pub fn prompt_to_install(version: &RequestedVersion) {
+ fn detect_installed_program(log: &log::Logger) -> io::Result<Vec<PathBuf>> {
+-	use crate::constants::PRODUCT_NAME_LONG;
++	use crate::constants::{APPLICATION_NAME, PRODUCT_NAME_LONG};
+ 
+@@ -251,3 +252,3 @@ fn detect_installed_program(log: &log::Logger) -> io::Result<Vec<PathBuf>> {
+ 	if probable.exists() {
+-		probable.extend(["Contents/Resources", "app", "bin", "code"]);
++		probable.extend(["Contents/Resources", "app", "bin", APPLICATION_NAME]);
+ 		return Ok(vec![probable]);
+@@ -296,3 +297,3 @@ fn detect_installed_program(log: &log::Logger) -> io::Result<Vec<PathBuf>> {
+ 					output.push(
+-						[suffix.trim(), "Contents/Resources", "app", "bin", "code"]
++						[suffix.trim(), "Contents/Resources", "app", "bin", APPLICATION_NAME]
+ 							.iter()
+@@ -401,7 +402,7 @@ fn detect_installed_program(log: &log::Logger) -> io::Result<Vec<PathBuf>> {
+ const DESKTOP_CLI_RELATIVE_PATH: &str = if cfg!(target_os = "macos") {
+-	"Contents/Resources/app/bin/code"
++	concatcp!("Contents/Resources/app/bin/", APPLICATION_NAME)
+ } else if cfg!(target_os = "windows") {
+-	"bin/code.cmd,bin/code-insiders.cmd,bin/code-exploration.cmd"
++	concatcp!("bin/", APPLICATION_NAME, ".cmd")
+ } else {
+-	"bin/code,bin/code-insiders,bin/code-exploration"
++	concatcp!("bin/", APPLICATION_NAME)
+ };
 diff --git a/src/vs/platform/native/electron-main/nativeHostMainService.ts b/src/vs/platform/native/electron-main/nativeHostMainService.ts
 index 2c3b710..8041f08 100644
 --- a/src/vs/platform/native/electron-main/nativeHostMainService.ts

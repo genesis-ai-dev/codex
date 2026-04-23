@@ -17,6 +17,11 @@ on:
 
 jobs:
   prepare:
+    # Gate: workflow_dispatch / workflow_call always runs; issue_comment
+    # triggers only run when a trusted author posts exactly "/build" on
+    # a PR. The author_association check is the security boundary — it
+    # stops drive-by commenters from spending our signing credits /
+    # running arbitrary PR code with our secrets.
     if: |
       github.event_name != 'issue_comment' ||
       (github.event.issue.pull_request != null &&
@@ -27,6 +32,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.version.outputs.version }}
+      short_hash: ${{ steps.version.outputs.short_hash }}
       head_sha: ${{ steps.pr.outputs.head_sha }}
       pr_number: ${{ steps.pr.outputs.pr_number }}
 
@@ -66,9 +72,26 @@ jobs:
       - name: Compute version
         id: version
         run: |
+          set -euo pipefail
           MS_TAG=$(jq -r '.tag' ./upstream/stable.json)
           SHORT_HASH=$(git rev-parse --short HEAD)
-          echo "version=${MS_TAG}-pr${{ steps.pr.outputs.pr_number }}-${SHORT_HASH}" >> "$GITHUB_OUTPUT"
+          # RELEASE_VERSION flows through to package.json → Inno Setup's
+          # VersionInfoVersion → the Windows installer's embedded PE
+          # version. Two constraints it has to satisfy:
+          #   1. get_repo.sh regex: ^([0-9]+\.[0-9]+\.[0-5])[0-9]+$
+          #   2. Inno VersionInfoVersion: each dotted component is an
+          #      unsigned 16-bit int (0-65535).
+          # A PR+hash suffix ("1.108.1-pr34-abc1234") would fail both,
+          # so we build a digit-only value that mirrors stable-windows:
+          # MS_TAG + hour-of-year TIME_PATCH. TIME_PATCH ≤ 8783 keeps
+          # the third component ≤ 19999, comfortably under 65535.
+          # PR number and short hash are carried only in the release
+          # title / PR comment. Same-hour collisions with stable builds
+          # are possible but rare; rerun in the next hour if they occur.
+          TIME_PATCH=$(printf '%04d' $(( $(date -u +%-j) * 24 + $(date -u +%-H) )))
+          VERSION="${MS_TAG}${TIME_PATCH}"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "short_hash=${SHORT_HASH}" >> "$GITHUB_OUTPUT"
 
   build-macos:
     needs: prepare
@@ -90,6 +113,19 @@ jobs:
         with:
           node-version-file: '.nvmrc'
 
+      # prepare_vscode.sh hardcodes nameShort/nameLong to "Codex" and
+      # doesn't read APP_NAME. Root product.json is merged in last
+      # (jq '.[0] * .[1]'), so fields we set here win over the script's
+      # setpath calls. darwinBundleIdentifier is also swapped so the
+      # Beta.app doesn't share LaunchServices state with stable Codex.
+      - name: Override product.json for Beta branding
+        run: |
+          jq '.nameShort = "Codex Beta"
+            | .nameLong = "Codex Beta"
+            | .darwinBundleIdentifier = "com.codex.beta"' \
+            product.json > product.json.tmp
+          mv product.json.tmp product.json
+
       - name: Build
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -107,151 +143,249 @@ jobs:
           path: assets/*.dmg
           retention-days: 3
 
-  # Windows build is disabled pending fixes to the cross-compile pipeline.
-  #
-  # Root causes identified so far (both fixed in env vars but not yet validated):
-  #
-  # 1. OS_NAME not set → prepare_vscode.sh evaluates "../patches/${OS_NAME}/" as
-  #    "../patches//" which matches the root patches dir, causing all patches to be
-  #    applied twice. The second application of add-remote-url.patch (and others)
-  #    fails because the files were already modified. Fix: OS_NAME: windows.
-  #
-  # 2. CI_BUILD not set → get-extensions.sh sources `set -euo pipefail` into the
-  #    calling shell, enabling nounset (-u). build.sh line 44 then hits
-  #    "${CI_BUILD}: unbound variable". Fix: CI_BUILD: 'yes' (also correctly
-  #    skips local packaging, which is handled by the separate build-windows job).
-  #
-  # After those two env vars are confirmed working, the next unknown is whether
-  # build.sh completes compilation cleanly and produces a valid vscode artifact
-  # that the build-windows packaging job can consume.
-  #
-  # compile-windows:
-  #   needs: prepare
-  #   runs-on: ubuntu-22.04
-  #   env:
-  #     APP_NAME: Codex Beta
-  #     BINARY_NAME: codex-beta
-  #     RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
-  #     CUSTOM_RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
-  #     VSCODE_ARCH: x64
-  #     VSCODE_QUALITY: stable
-  #     CI_BUILD: 'yes'
-  #     OS_NAME: windows
-  #     SHOULD_BUILD: 'yes'
-  #     SHOULD_BUILD_REH: 'no'
-  #     SHOULD_BUILD_REH_WEB: 'no'
-  #
-  #   steps:
-  #     - uses: actions/checkout@v4
-  #       with:
-  #         ref: ${{ needs.prepare.outputs.head_sha }}
-  #
-  #     - name: Setup GCC
-  #       uses: egor-tensin/setup-gcc@v1
-  #       with:
-  #         version: 10
-  #         platform: x64
-  #
-  #     - name: Setup Node.js
-  #       uses: actions/setup-node@v4
-  #       with:
-  #         node-version-file: '.nvmrc'
-  #
-  #     - name: Setup Python 3
-  #       uses: actions/setup-python@v5
-  #       with:
-  #         python-version: '3.11'
-  #
-  #     - name: Install libkrb5-dev
-  #       run: sudo apt-get update -y && sudo apt-get install -y libkrb5-dev
-  #
-  #     - name: Clone VSCode repo
-  #       run: ./get_repo.sh
-  #
-  #     - name: Build
-  #       env:
-  #         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-  #       run: ./build.sh
-  #
-  #     - name: Compress vscode artifact
-  #       run: |
-  #         find vscode -type f \
-  #           -not -path "*/node_modules/*" \
-  #           -not -path "vscode/.build/node/*" \
-  #           -not -path "vscode/.git/*" > vscode.txt
-  #         [ -d "vscode/.build/extensions/node_modules" ] && echo "vscode/.build/extensions/node_modules" >> vscode.txt
-  #         echo "vscode/.git" >> vscode.txt
-  #         tar -czf vscode.tar.gz -T vscode.txt
-  #
-  #     - name: Upload vscode artifact
-  #       uses: actions/upload-artifact@v4
-  #       with:
-  #         name: vscode-compiled
-  #         path: ./vscode.tar.gz
-  #         retention-days: 1
-  #
-  # build-windows:
-  #   needs: [prepare, compile-windows]
-  #   runs-on: windows-2022
-  #   defaults:
-  #     run:
-  #       shell: bash
-  #   env:
-  #     APP_NAME: Codex Beta
-  #     BINARY_NAME: codex-beta
-  #     RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
-  #     CUSTOM_RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
-  #     VSCODE_ARCH: x64
-  #     VSCODE_QUALITY: stable
-  #
-  #   steps:
-  #     - uses: actions/checkout@v4
-  #       with:
-  #         ref: ${{ needs.prepare.outputs.head_sha }}
-  #
-  #     - name: Setup Node.js
-  #       uses: actions/setup-node@v4
-  #       with:
-  #         node-version-file: '.nvmrc'
-  #
-  #     - name: Setup Python 3
-  #       uses: actions/setup-python@v5
-  #       with:
-  #         python-version: '3.11'
-  #
-  #     - name: Download compiled vscode
-  #       uses: actions/download-artifact@v4
-  #       with:
-  #         name: vscode-compiled
-  #
-  #     - name: Extract vscode artifact
-  #       run: tar -xzf vscode.tar.gz
-  #
-  #     - name: Build Windows package
-  #       env:
-  #         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-  #         npm_config_arch: x64
-  #         npm_config_target_arch: x64
-  #       run: ./build/windows/package.sh
-  #
-  #     - name: Prepare assets
-  #       run: ./prepare_assets.sh
-  #
-  #     - name: Upload Windows artifacts
-  #       uses: actions/upload-artifact@v4
-  #       with:
-  #         name: windows-x64
-  #         path: |
-  #           assets/*.exe
-  #           assets/*.msi
-  #         retention-days: 3
+  # Windows builds are split in two jobs (matching stable-windows.yml):
+  # compile runs on an Ubuntu runner because VS Code's gulp compile is
+  # platform-agnostic and Ubuntu runners are faster + cheaper than
+  # windows-2022. The packaged vscode/ tree is passed as an artifact
+  # to the windows-2022 runner for the Windows-specific packaging.
+  compile-windows:
+    needs: prepare
+    runs-on: ubuntu-22.04
+    env:
+      APP_NAME: Codex Beta
+      BINARY_NAME: codex-beta
+      RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
+      CUSTOM_RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
+      VSCODE_ARCH: x64
+      VSCODE_QUALITY: stable
+      # OS_NAME steers build.sh into its Windows branch despite running
+      # on an Ubuntu host.
+      OS_NAME: windows
+      SHOULD_BUILD: 'yes'
+      # Skip Remote Extension Host variants: PR preview installers don't
+      # ship code-server / remote-tunnel, and building them roughly
+      # doubles the compile time.
+      SHOULD_BUILD_REH: 'no'
+      SHOULD_BUILD_REH_WEB: 'no'
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.head_sha }}
+
+      - name: Setup GCC
+        uses: egor-tensin/setup-gcc@v1
+        with:
+          version: 10
+          platform: x64
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: '.nvmrc'
+
+      - name: Setup Python 3
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install libkrb5-dev
+        run: sudo apt-get update -y && sudo apt-get install -y libkrb5-dev
+
+      - name: Clone VSCode repo
+        run: ./get_repo.sh
+
+      # See build-macos for why — same product.json merge trick. For
+      # Windows we also override the win32* display fields so Start Menu
+      # / Add-Remove-Programs / installer all show "Codex Beta".
+      - name: Override product.json for Beta branding
+        run: |
+          jq '.nameShort = "Codex Beta"
+            | .nameLong = "Codex Beta"
+            | .win32DirName = "Codex Beta"
+            | .win32NameVersion = "Codex Beta"
+            | .win32ShellNameShort = "Codex Beta"' \
+            product.json > product.json.tmp
+          mv product.json.tmp product.json
+
+      - name: Build
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: ./build.sh
+
+      - name: Compress vscode artifact
+        # Exclude node_modules and .build/node (both are regenerated by
+        # the Windows packaging step's `npm ci`). Keep .git because the
+        # Windows gulp tasks read git metadata when building the
+        # installer, and keep built extension node_modules because they
+        # contain already-compiled native bits we don't want to rebuild.
+        run: |
+          find vscode -type f \
+            -not -path "*/node_modules/*" \
+            -not -path "vscode/.build/node/*" \
+            -not -path "vscode/.git/*" > vscode.txt
+          [ -d "vscode/.build/extensions/node_modules" ] && echo "vscode/.build/extensions/node_modules" >> vscode.txt
+          echo "vscode/.git" >> vscode.txt
+          tar -czf vscode.tar.gz -T vscode.txt
+
+      - name: Upload vscode artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: vscode-compiled
+          path: ./vscode.tar.gz
+          retention-days: 1
+
+  build-windows:
+    needs: [prepare, compile-windows]
+    runs-on: windows-2022
+    defaults:
+      run:
+        # Use Git-Bash so all our shell scripts (prepare_assets.sh,
+        # build_cli.sh, etc.) run with the same POSIX shell they use on
+        # the Ubuntu/macOS runners.
+        shell: bash
+    env:
+      APP_NAME: Codex Beta
+      BINARY_NAME: codex-beta
+      RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
+      CUSTOM_RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
+      VSCODE_ARCH: x64
+      VSCODE_QUALITY: stable
+      # build_cli.sh branches on OS_NAME; without it set, the Windows
+      # runner falls into the Linux branch and tries to cross-compile
+      # openssl-sys for x86_64-unknown-linux-gnu.
+      OS_NAME: windows
+      # build/windows/package.sh exits early when CI_BUILD == "no" (it
+      # assumes packaging only happens in CI).
+      CI_BUILD: 'yes'
+      # Must match compile-windows — if REH was skipped there it'll be
+      # missing here, and the package.sh REH gulp tasks would fail.
+      SHOULD_BUILD_REH: 'no'
+      SHOULD_BUILD_REH_WEB: 'no'
+      # Skip MSI installers for PR previews. The WiX configs hardcode
+      # "Codex" in the output filename, but prepare_assets.sh expects
+      # "${APP_NAME}-..." and APP_NAME is "Codex Beta" here — the mv
+      # step fails on the mismatch. Users install via the .exe setup.
+      SHOULD_BUILD_MSI: 'no'
+      SHOULD_BUILD_MSI_NOUP: 'no'
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.head_sha }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: '.nvmrc'
+
+      - name: Setup Python 3
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Download compiled vscode
+        uses: actions/download-artifact@v4
+        with:
+          name: vscode-compiled
+
+      - name: Extract vscode artifact
+        run: tar -xzf vscode.tar.gz
+
+      - name: Build Windows package
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          npm_config_arch: x64
+          npm_config_target_arch: x64
+        run: ./build/windows/package.sh
+
+      # SSL.com's batch_sign takes a single flat input directory — it
+      # doesn't recurse and it doesn't preserve subpaths. We flatten
+      # every .exe/.dll in VSCode-win32-x64 into one directory with
+      # path separators replaced by underscores, recording the original
+      # path in app_signing_map.txt so we can restore after signing.
+      # (Two-pass signing: first the individual app binaries so the
+      # installer embeds already-signed files, then the installer
+      # itself. A single pass would leave unsigned binaries inside a
+      # signed installer and SmartScreen would still warn on use.)
+      - name: Prepare application binaries for signing
+        run: |
+          mkdir -p app_signing_input app_signing_output
+          find VSCode-win32-x64 -type f \( -name "*.exe" -o -name "*.dll" \) | while read f; do
+            newname=$(echo "$f" | tr '/' '_')
+            cp "$f" "app_signing_input/$newname"
+            echo "$newname|$f" >> app_signing_map.txt
+          done
+          echo "Files to sign:"
+          ls -la app_signing_input/
+
+      - name: Sign application binaries with SSL.com eSigner
+        uses: sslcom/esigner-codesign@develop
+        with:
+          command: batch_sign
+          username: ${{ secrets.ES_USERNAME }}
+          password: ${{ secrets.ES_PASSWORD }}
+          credential_id: ${{ secrets.ES_CREDENTIAL_ID }}
+          totp_secret: ${{ secrets.ES_TOTP_SECRET }}
+          dir_path: ${GITHUB_WORKSPACE}/app_signing_input
+          output_path: ${GITHUB_WORKSPACE}/app_signing_output
+          environment_name: PROD
+          override: true
+          malware_block: true
+          clean_logs: true
+
+      - name: Restore signed application binaries
+        run: |
+          while IFS='|' read -r newname origpath; do
+            cp "app_signing_output/$newname" "$origpath"
+          done < app_signing_map.txt
+          rm -rf app_signing_input app_signing_output app_signing_map.txt
+
+      - name: Prepare assets
+        run: ./prepare_assets.sh
+
+      - name: Prepare installers for signing
+        run: |
+          mkdir -p signing_input signing_output
+          mv assets/*.exe signing_input/ || true
+          mv assets/*.msi signing_input/ || true
+
+      - name: Sign installers with SSL.com eSigner
+        uses: sslcom/esigner-codesign@develop
+        with:
+          command: batch_sign
+          username: ${{ secrets.ES_USERNAME }}
+          password: ${{ secrets.ES_PASSWORD }}
+          credential_id: ${{ secrets.ES_CREDENTIAL_ID }}
+          totp_secret: ${{ secrets.ES_TOTP_SECRET }}
+          dir_path: ${GITHUB_WORKSPACE}/signing_input
+          output_path: ${GITHUB_WORKSPACE}/signing_output
+          environment_name: PROD
+          override: true
+          malware_block: true
+          clean_logs: true
+
+      - name: Move signed installers back
+        run: |
+          mv signing_output/*.exe assets/ || true
+          mv signing_output/*.msi assets/ || true
+          rm -rf signing_input signing_output
+
+      - name: Upload Windows artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-x64
+          path: assets/*.exe
+          retention-days: 3
 
   release:
-    needs: [prepare, build-macos]
+    needs: [prepare, build-macos, build-windows]
     runs-on: ubuntu-latest
     env:
       GH_TOKEN: ${{ secrets.STRONGER_GITHUB_TOKEN }}
       VERSION: ${{ needs.prepare.outputs.version }}
+      SHORT_HASH: ${{ needs.prepare.outputs.short_hash }}
+      PR_NUMBER: ${{ needs.prepare.outputs.pr_number }}
 
     steps:
       - uses: actions/checkout@v4
@@ -263,22 +397,30 @@ jobs:
         with:
           path: artifacts/
 
+      # Release tag carries the PR number + short hash so multiple
+      # builds of the same PR don't collide and each one is traceable
+      # back to the exact commit. The app-internal version strings stay
+      # as digits-only VERSION (Windows installer version fields reject
+      # non-numeric components) — the tag is purely a GH-side label.
       - name: Create prerelease
         run: |
-          gh release create "$VERSION" \
+          RELEASE_TAG="${VERSION}-pr${PR_NUMBER}-${SHORT_HASH}"
+          echo "RELEASE_TAG=${RELEASE_TAG}" >> "$GITHUB_ENV"
+          gh release create "$RELEASE_TAG" \
             --target "${{ needs.prepare.outputs.head_sha }}" \
             --prerelease \
-            --title "Codex Beta $VERSION" \
+            --title "Codex Beta $VERSION (PR #${PR_NUMBER} @ ${SHORT_HASH})" \
             --generate-notes \
-            artifacts/macos-arm64/*.dmg
+            artifacts/macos-arm64/*.dmg \
+            artifacts/windows-x64/*.exe
 
       - name: Comment on PR
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          RELEASE_URL="https://github.com/${{ github.repository }}/releases/tag/${VERSION}"
-          gh pr comment "${{ needs.prepare.outputs.pr_number }}" \
-            --body "Pre-release: ${VERSION} ${RELEASE_URL}"
+          RELEASE_URL="https://github.com/${{ github.repository }}/releases/tag/${RELEASE_TAG}"
+          gh pr comment "${PR_NUMBER}" \
+            --body "Pre-release: ${VERSION} (${SHORT_HASH}) ${RELEASE_URL}"
 
       - name: React with rocket on success
         if: success() && github.event_name == 'issue_comment'
@@ -289,7 +431,7 @@ jobs:
             --method POST -f content='rocket'
 
   notify-failure:
-    needs: [prepare, build-macos, release]
+    needs: [prepare, build-macos, compile-windows, build-windows, release]
     if: always() && contains(needs.*.result, 'failure')
     runs-on: ubuntu-latest
     steps:
@@ -305,7 +447,7 @@ jobs:
           fi
           
           if [[ -n "$PR_NUMBER" ]]; then
-            gh pr comment "${PR_NUMBER}" --body "Build failed: ${RUN_URL}"
+            gh pr comment "${PR_NUMBER}" --repo "${{ github.repository }}" --body "Build failed: ${RUN_URL}"
           fi
           
           if [ "${{ github.event_name }}" = "issue_comment" ]; then

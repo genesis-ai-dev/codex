@@ -29,7 +29,7 @@ ENV PATH="/root/.cargo/bin:${PATH}"
 COPY . /opt/vscodium
 WORKDIR /opt/vscodium
 
-RUN ./dev/build.sh && \
+RUN SHOULD_BUILD_REH=yes SHOULD_BUILD_REH_WEB=yes ./dev/build.sh && \
     mkdir ./vscode-reh-web-linux-x64/scripts && \
     cp ./vscode/scripts/code-server.js ./vscode-reh-web-linux-x64/scripts/code-server.cjs && \
     cp -r ./vscode/node_modules ./vscode-reh-web-linux-x64/

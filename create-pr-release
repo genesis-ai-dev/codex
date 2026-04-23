@@ -1,0 +1,102 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Ensure we're in the right directory
+if [[ ! -f product.json ]]; then
+  echo "Error: no product.json in current directory. Run this from the root of the codex repository." >&2
+  exit 1
+fi
+
+if [[ -n "$(git status --porcelain 2>/dev/null)" ]]; then
+  printf '\033[33mWarning: git working tree is dirty.\033[0m\n' >&2
+fi
+
+# ---------------------------------------------------------------------------
+# Resolve VERSION and RELEASE_TAG
+# ---------------------------------------------------------------------------
+# Get the base version from upstream/stable.json (the MS tag)
+MS_TAG=$(jq -r '.tag' "./upstream/stable.json")
+SHORT_HASH="$(git rev-parse --short HEAD)"
+
+# RELEASE_VERSION flows through to package.json and installer fields.
+# For Windows and VS Code version compatibility, this must be digit-only.
+# We use the hour-of-year pattern (TIME_PATCH) from stable-windows.yml.
+TIME_PATCH=$(printf '%04d' $(( $(date -u +%-j) * 24 + $(date -u +%-H) )))
+VERSION="${MS_TAG}${TIME_PATCH}"
+
+# Try to get PR number from current branch or gh
+if ! command -v gh &>/dev/null; then
+  echo "Error: 'gh' CLI is required." >&2
+  exit 1
+fi
+
+PR_NUMBER="$(gh pr view --json number -q .number 2>/dev/null || true)"
+
+if [[ -z "$PR_NUMBER" ]]; then
+  echo "No open PR detected for the current branch."
+  RELEASE_TAG="${VERSION}-dev-${SHORT_HASH}"
+else
+  RELEASE_TAG="${VERSION}-pr${PR_NUMBER}-${SHORT_HASH}"
+fi
+
+echo "Generated app version: $VERSION"
+echo "Generated release tag: $RELEASE_TAG"
+
+# ---------------------------------------------------------------------------
+# Setup environment variables
+# ---------------------------------------------------------------------------
+export APP_NAME="Codex Beta"
+export BINARY_NAME="codex-beta"
+export RELEASE_VERSION="${VERSION}"
+export CUSTOM_RELEASE_VERSION="${VERSION}" # Hook for get_repo.sh
+export SKIP_SOURCE="no"
+export SKIP_ASSETS="no" # We want the DMG
+export VSCODE_QUALITY="stable"
+
+echo "==> Starting build for $APP_NAME ($VERSION)"
+# dev/build.sh is the main entry point for local builds
+./dev/build.sh -sp
+
+# ---------------------------------------------------------------------------
+# Release on GitHub
+# ---------------------------------------------------------------------------
+
+# Determine architecture
+UNAME_ARCH=$( uname -m )
+if [[ "${UNAME_ARCH}" == "aarch64" || "${UNAME_ARCH}" == "arm64" ]]; then
+  ARCH="arm64"
+else
+  ARCH="x64"
+fi
+
+# The filename is constructed in prepare_assets.sh using VERSION
+DMG_FILE="assets/${APP_NAME}.${ARCH}.${VERSION}.dmg"
+
+if [[ ! -f "$DMG_FILE" ]]; then
+  echo "Error: DMG artifact not found at $DMG_FILE" >&2
+  echo "Listing assets directory:"
+  ls -l assets/
+  exit 1
+fi
+
+echo "==> Creating GitHub prerelease: $RELEASE_TAG"
+gh release create "$RELEASE_TAG" \
+  --target "$(git rev-parse HEAD)" \
+  --prerelease \
+  --title "$APP_NAME $VERSION (PR #${PR_NUMBER:-dev} @ $SHORT_HASH)" \
+  --generate-notes \
+  "./$DMG_FILE"
+
+REPO_URL="$(gh repo view --json url -q .url)"
+RELEASE_URL="${REPO_URL}/releases/tag/${RELEASE_TAG}"
+echo "Done! Prerelease $RELEASE_TAG created with $DMG_FILE"
+
+if [[ -n "${PR_NUMBER:-}" ]]; then
+  gh pr comment "$PR_NUMBER" --body "Pre-release: ${VERSION} (${SHORT_HASH}) ${RELEASE_URL}"
+  echo "Commented PR #${PR_NUMBER}"
+fi
+
+# Only open if in a terminal
+if [[ -t 1 ]]; then
+  open "$REPO_URL/releases"
+fi
