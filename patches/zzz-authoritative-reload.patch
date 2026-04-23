@@ -65,6 +65,26 @@ index 63652a5..3511ecd 100644
  			home: this.userDataProfilesService.profilesHome
  		};
  		configuration.logLevel = this.loggerMainService.getLogLevel();
+diff --git a/src/vs/platform/windows/electron-main/windowsMainService.ts b/src/vs/platform/windows/electron-main/windowsMainService.ts
+index 117dfd2..68a9c06 100644
+--- a/src/vs/platform/windows/electron-main/windowsMainService.ts
++++ b/src/vs/platform/windows/electron-main/windowsMainService.ts
+@@ -1669,12 +1669,9 @@ export class WindowsMainService extends Disposable implements IWindowsMainServic
+ 		const profile = profilePromise instanceof Promise ? await profilePromise : profilePromise;
+ 		configuration.profiles.profile = profile;
+ 
+-		if (!configuration.extensionDevelopmentPath) {
+-			// Associate the configured profile to the workspace
+-			// unless the window is for extension development,
+-			// where we do not persist the associations
+-			await this.userDataProfilesMainService.setProfileForWorkspace(workspace, profile);
+-		}
++		// Associate the configured profile to the workspace.
++		// For Codex, we want this to persist even during extension development.
++		await this.userDataProfilesMainService.setProfileForWorkspace(workspace, profile);
+ 
+ 		// Load it
+ 		window.load(configuration);
 diff --git a/src/vs/workbench/services/host/browser/host.ts b/src/vs/workbench/services/host/browser/host.ts
 index 4ac35c9..23e7bab 100644
 --- a/src/vs/workbench/services/host/browser/host.ts

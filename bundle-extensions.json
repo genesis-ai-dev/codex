@@ -1,9 +1,3 @@
 {
-  "bundle": [
-    {
-      "name": "extension-sideloader",
-      "github_release": "genesis-ai-dev/extension-sideloader",
-      "tag": "0.1.0"
-    }
-  ]
+  "bundle": []
 }
