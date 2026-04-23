@@ -113,6 +113,19 @@ jobs:
         with:
           node-version-file: '.nvmrc'
 
+      # prepare_vscode.sh hardcodes nameShort/nameLong to "Codex" and
+      # doesn't read APP_NAME. Root product.json is merged in last
+      # (jq '.[0] * .[1]'), so fields we set here win over the script's
+      # setpath calls. darwinBundleIdentifier is also swapped so the
+      # Beta.app doesn't share LaunchServices state with stable Codex.
+      - name: Override product.json for Beta branding
+        run: |
+          jq '.nameShort = "Codex Beta"
+            | .nameLong = "Codex Beta"
+            | .darwinBundleIdentifier = "com.codex.beta"' \
+            product.json > product.json.tmp
+          mv product.json.tmp product.json
+
       - name: Build
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -181,6 +194,19 @@ jobs:
 
       - name: Clone VSCode repo
         run: ./get_repo.sh
+
+      # See build-macos for why — same product.json merge trick. For
+      # Windows we also override the win32* display fields so Start Menu
+      # / Add-Remove-Programs / installer all show "Codex Beta".
+      - name: Override product.json for Beta branding
+        run: |
+          jq '.nameShort = "Codex Beta"
+            | .nameLong = "Codex Beta"
+            | .win32DirName = "Codex Beta"
+            | .win32NameVersion = "Codex Beta"
+            | .win32ShellNameShort = "Codex Beta"' \
+            product.json > product.json.tmp
+          mv product.json.tmp product.json
 
       - name: Build
         env:
@@ -371,9 +397,16 @@ jobs:
         with:
           path: artifacts/
 
+      # Release tag carries the PR number + short hash so multiple
+      # builds of the same PR don't collide and each one is traceable
+      # back to the exact commit. The app-internal version strings stay
+      # as digits-only VERSION (Windows installer version fields reject
+      # non-numeric components) — the tag is purely a GH-side label.
       - name: Create prerelease
         run: |
-          gh release create "$VERSION" \
+          RELEASE_TAG="${VERSION}-pr${PR_NUMBER}-${SHORT_HASH}"
+          echo "RELEASE_TAG=${RELEASE_TAG}" >> "$GITHUB_ENV"
+          gh release create "$RELEASE_TAG" \
             --target "${{ needs.prepare.outputs.head_sha }}" \
             --prerelease \
             --title "Codex Beta $VERSION (PR #${PR_NUMBER} @ ${SHORT_HASH})" \
@@ -385,7 +418,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          RELEASE_URL="https://github.com/${{ github.repository }}/releases/tag/${VERSION}"
+          RELEASE_URL="https://github.com/${{ github.repository }}/releases/tag/${RELEASE_TAG}"
           gh pr comment "${PR_NUMBER}" \
             --body "Pre-release: ${VERSION} (${SHORT_HASH}) ${RELEASE_URL}"
 
