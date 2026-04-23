@@ -1,6 +1,6 @@
 === PATCH REBUILD ===
-**Build Version:** 1.108.12374
+**Build Version:** 1.108.12734
 **Base VS Code:** 1.108.1
-**Rebuild Reason:** Revert menu item removal
-**Build Date:** Wed Apr  8 22:01:29 UTC 2026
-**Commit:** 0f8536c30ad55ec281c56bfaaf9e1659f4233831
+**Rebuild Reason:** Project-scoped extension pinning. Includes: conductor, sideloader.
+**Build Date:** Thu Apr 23 22:46:56 UTC 2026
+**Commit:** bd487a98ca260f6b3525365cdd401ef8215f225d
