@@ -1,0 +1,8 @@
+diff --git a/src/vs/workbench/workbench.common.main.ts b/src/vs/workbench/workbench.common.main.ts
+index 5ede7d5..89fcb25 100644
+--- a/src/vs/workbench/workbench.common.main.ts
++++ b/src/vs/workbench/workbench.common.main.ts
+@@ -327,2 +327,3 @@ import './contrib/keybindings/browser/keybindings.contribution.js';
+ import './contrib/codexConductor/browser/codexConductor.contribution.js';
++import './contrib/codexSideloader/browser/codexSideloader.contribution.js';
+ 

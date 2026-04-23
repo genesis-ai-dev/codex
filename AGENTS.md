@@ -82,7 +82,7 @@ Extensions reach the final build three ways:
 |--------|--------|------|
 | **Built-in** (compiled from source) | `vscode/extensions/` | Compiled by gulp during build |
 | **Downloaded** (pre-built VSIX) | `bundle-extensions.json` | Downloaded from GitHub Releases by `get-extensions.sh` |
-| **Sideloaded** (runtime install) | Extension sideloader config | Installed from OpenVSX on first launch |
+| **Sideloaded** (runtime install) | `product.json` `codexSideloadExtensions` | Installed on first launch by `CodexSideloader` shell contribution (from gallery or direct VSIX URL) |
 
 ### Output
 
@@ -159,6 +159,7 @@ Some Codex patches modify files that earlier patches also touch. When this happe
 | Patch | Depends on |
 |-------|-----------|
 | `feat-cli-pinning.patch` | `binary-name.patch` (both modify `nativeHostMainService.ts`) |
+| `feat-codex-sideloader.patch` | `feat-codex-conductor.patch` (both add imports to `workbench.common.main.ts`) |
 
 If a patch fails to apply with "patch does not apply", check whether a prerequisite patch changed the same file. Regenerate using `dev/patch.sh` with the prerequisite listed first.
 
@@ -178,6 +179,13 @@ Enforces project-scoped extension version pins. Reads `pinnedExtensions` from pr
 - **Duplicate Prevention:** Explicitly calls `resetWorkspaces()` before associating a profile to ensure lookup consistency.
 - **Loop Guard:** Includes a 3-cycle circuit breaker to prevent infinite reload loops if enforcement fails.
 - **Lifecycle Management:** Automatic cleanup of orphaned profiles every 14 days.
+
+### CodexSideloader (Workbench Contribution)
+
+**Location:** `src/stable/src/vs/workbench/contrib/codexSideloader/`
+**Patch:** `patches/feat-codex-sideloader.patch` (adds import to `workbench.common.main.ts`, depends on `feat-codex-conductor.patch`)
+
+Ensures global extensions are installed on startup. Reads the `codexSideloadExtensions` array from `product.json`. Entries can be a string (gallery install from Open VSX) or an object with `id`, `vsix`, and `version` fields (direct VSIX install via shared process IPC, bypassing the marketplace). String entries are skipped if the extension is already installed at any version; object entries are reinstalled whenever the installed version doesn't match `version`. Replaces the standalone `extension-sideloader` extension.
 
 ### CLI Pin Commands (Rust)
 
