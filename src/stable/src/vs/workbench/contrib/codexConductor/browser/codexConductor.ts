@@ -13,6 +13,7 @@ import { IWorkbenchExtensionManagementService } from '../../../services/extensio
 import { IStorageService, StorageScope, StorageTarget } from '../../../../platform/storage/common/storage.js';
 import { INotificationService, Severity } from '../../../../platform/notification/common/notification.js';
 import { URI } from '../../../../base/common/uri.js';
+import { VSBuffer } from '../../../../base/common/buffer.js';
 import { joinPath } from '../../../../base/common/resources.js';
 import { IHostService } from '../../../services/host/browser/host.js';
 import { CommandsRegistry } from '../../../../platform/commands/common/commands.js';
@@ -133,6 +134,14 @@ export class CodexConductorContribution extends Disposable implements IWorkbench
 
 		// Snapshot current pins before enforcement
 		this.lastSeenPinsSnapshot = await this.readPinsSnapshot();
+
+		// Backfill: if we're already sitting on a conductor profile (no reload
+		// needed this session), make sure its settings still disable update
+		// checks. Handles users whose profiles were created before this change.
+		const currentProfile = this.userDataProfileService.currentProfile;
+		if (currentProfile.icon === CONDUCTOR_PROFILE_ICON) {
+			await this.seedProfileSettings(currentProfile);
+		}
 
 		// Run initial enforcement
 		await this.enforce();
@@ -837,6 +846,58 @@ export class CodexConductorContribution extends Disposable implements IWorkbench
 	}
 
 	/**
+	 * Seeds a conductor-managed profile's settings.json with the keys needed to
+	 * keep pinned extensions stable: disables the marketplace update check and
+	 * auto-update for that profile only. Idempotent — merges with any existing
+	 * profile settings and skips the write when the desired values are already
+	 * present. Requires the companion patch that drops APPLICATION scope from
+	 * `extensions.autoCheckUpdates` / `extensions.autoUpdate` so that profile
+	 * settings can override the user-level defaults.
+	 */
+	private async seedProfileSettings(profile: IUserDataProfile): Promise<void> {
+		if (profile.icon !== CONDUCTOR_PROFILE_ICON) {
+			return;
+		}
+
+		const uri = profile.settingsResource;
+		let existing: Record<string, unknown> = {};
+		try {
+			const buf = await this.fileService.readFile(uri);
+			const text = buf.value.toString().trim();
+			if (text) {
+				const parsed: unknown = JSON.parse(text);
+				if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+					existing = parsed as Record<string, unknown>;
+				}
+			}
+		} catch {
+			// No settings file yet, or unparseable — start fresh. We deliberately
+			// overwrite a malformed file because a conductor profile has no
+			// user-authored settings we need to preserve.
+		}
+
+		if (
+			existing['extensions.autoCheckUpdates'] === false
+			&& existing['extensions.autoUpdate'] === false
+		) {
+			return;
+		}
+
+		const next = {
+			...existing,
+			'extensions.autoCheckUpdates': false,
+			'extensions.autoUpdate': false,
+		};
+
+		try {
+			await this.fileService.writeFile(uri, VSBuffer.fromString(JSON.stringify(next, null, 4)));
+			this.logService.info(`[CodexConductor] Seeded profile "${profile.name}" settings — update checks disabled`);
+		} catch (e: unknown) {
+			this.logService.warn(`[CodexConductor] Failed to seed profile settings for "${profile.name}": ${e instanceof Error ? e.message : String(e)}`);
+		}
+	}
+
+	/**
 	 * switchProfile() for folder workspaces only persists the profile association
 	 * (via setProfileForWorkspace) — it does NOT restart the extension host or
 	 * change the active profile in the current session. A window reload is needed
@@ -851,6 +912,10 @@ export class CodexConductorContribution extends Disposable implements IWorkbench
 		const currentProfileName = this.userDataProfileService.currentProfile.name;
 
 		this.logService.info(`[CodexConductor] switchProfileAndReload: current=${currentProfileName}, target=${profile.name}`);
+
+		// Ensure the target conductor profile has update-checks disabled before
+		// the reload commits. Harmless (no-op) for the default profile.
+		await this.seedProfileSettings(profile);
 		this.logService.info(`[CodexConductor] Workspace ID: ${workspaceIdentifier.id}`);
 		if (isSingleFolderWorkspaceIdentifier(workspaceIdentifier)) {
 			this.logService.info(`[CodexConductor] Workspace URI: ${workspaceIdentifier.uri.toString()}`);
