@@ -1,0 +1,12 @@
+diff --git a/src/vs/workbench/contrib/extensions/browser/extensions.contribution.ts b/src/vs/workbench/contrib/extensions/browser/extensions.contribution.ts
+index f6c294e..b57e29a 100644
+--- a/src/vs/workbench/contrib/extensions/browser/extensions.contribution.ts
++++ b/src/vs/workbench/contrib/extensions/browser/extensions.contribution.ts
+@@ -151,3 +151,2 @@ Registry.as<IConfigurationRegistry>(ConfigurationExtensions.Configuration)
+ 				default: true,
+-				scope: ConfigurationScope.APPLICATION,
+ 				tags: ['usesOnlineServices']
+@@ -158,3 +157,2 @@ Registry.as<IConfigurationRegistry>(ConfigurationExtensions.Configuration)
+ 				default: true,
+-				scope: ConfigurationScope.APPLICATION,
+ 				tags: ['usesOnlineServices']
