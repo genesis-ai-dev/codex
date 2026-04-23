@@ -5,7 +5,7 @@
 set -euo pipefail
 
 if [[ -n "${SKIP_EXTENSIONS:-}" ]]; then
-    return 0
+    exit 0
 fi
 
 BUNDLE_JSON="../bundle-extensions.json"

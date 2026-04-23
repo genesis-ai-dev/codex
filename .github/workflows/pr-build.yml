@@ -305,7 +305,7 @@ jobs:
           fi
           
           if [[ -n "$PR_NUMBER" ]]; then
-            gh pr comment "${PR_NUMBER}" --body "Build failed: ${RUN_URL}"
+            gh pr comment "${PR_NUMBER}" --repo "${{ github.repository }}" --body "Build failed: ${RUN_URL}"
           fi
           
           if [ "${{ github.event_name }}" = "issue_comment" ]; then

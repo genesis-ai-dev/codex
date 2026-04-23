@@ -22,7 +22,7 @@ if [[ "${SHOULD_BUILD}" == "yes" ]]; then
   npm run gulp compile-extensions-build
   npm run gulp minify-vscode
 
-  . ../get-extensions.sh
+  ../get-extensions.sh
 
   if [[ "${OS_NAME}" == "osx" ]]; then
     # remove win32 node modules
