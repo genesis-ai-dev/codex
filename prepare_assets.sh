@@ -4,6 +4,30 @@
 set -e
 
 APP_NAME_LC="$( echo "${APP_NAME}" | awk '{print tolower($0)}' )"
+YELLOW=$'\033[33m'
+RESET=$'\033[0m'
+
+# Local dev packaging often runs without CI-exported asset toggles or macOS
+# signing secrets. Default optional inputs so sourcing this script remains safe.
+CERTIFICATE_OSX_P12_DATA="${CERTIFICATE_OSX_P12_DATA:-}"
+CERTIFICATE_OSX_P12_PASSWORD="${CERTIFICATE_OSX_P12_PASSWORD:-}"
+CERTIFICATE_OSX_ID="${CERTIFICATE_OSX_ID:-}"
+CERTIFICATE_OSX_TEAM_ID="${CERTIFICATE_OSX_TEAM_ID:-}"
+CERTIFICATE_OSX_APP_PASSWORD="${CERTIFICATE_OSX_APP_PASSWORD:-}"
+SHOULD_BUILD_ZIP="${SHOULD_BUILD_ZIP:-yes}"
+SHOULD_BUILD_DMG="${SHOULD_BUILD_DMG:-yes}"
+SHOULD_BUILD_SRC="${SHOULD_BUILD_SRC:-no}"
+SHOULD_BUILD_TAR="${SHOULD_BUILD_TAR:-yes}"
+SHOULD_BUILD_DEB="${SHOULD_BUILD_DEB:-yes}"
+SHOULD_BUILD_RPM="${SHOULD_BUILD_RPM:-yes}"
+SHOULD_BUILD_APPIMAGE="${SHOULD_BUILD_APPIMAGE:-yes}"
+SHOULD_BUILD_EXE_SYS="${SHOULD_BUILD_EXE_SYS:-yes}"
+SHOULD_BUILD_EXE_USR="${SHOULD_BUILD_EXE_USR:-yes}"
+SHOULD_BUILD_MSI="${SHOULD_BUILD_MSI:-yes}"
+SHOULD_BUILD_MSI_NOUP="${SHOULD_BUILD_MSI_NOUP:-yes}"
+SHOULD_BUILD_REH="${SHOULD_BUILD_REH:-no}"
+SHOULD_BUILD_REH_WEB="${SHOULD_BUILD_REH_WEB:-no}"
+SHOULD_BUILD_CLI="${SHOULD_BUILD_CLI:-yes}"
 
 mkdir -p assets
 
@@ -71,10 +95,17 @@ if [[ "${OS_NAME}" == "osx" ]]; then
     cd ..
   fi
 
-  if [[ -n "${CERTIFICATE_OSX_P12_DATA}" && "${SHOULD_BUILD_DMG}" != "no" ]]; then
+  if [[ "${SHOULD_BUILD_DMG}" != "no" ]]; then
     echo "Building and moving DMG"
     pushd "VSCode-darwin-${VSCODE_ARCH}"
-    npx create-dmg ./*.app .
+    if [[ -z "${CERTIFICATE_OSX_P12_DATA}" ]]; then
+      printf '%s\n' "${YELLOW}Warning: generating an unsigned macOS DMG because no Developer ID signing certificate is configured. Team members may see Gatekeeper warnings when opening it.${RESET}"
+    fi
+    npx create-dmg ./*.app . || true
+    if ! ls ./*.dmg 1>/dev/null 2>&1; then
+      echo "Error: DMG creation failed — no .dmg file was produced" >&2
+      exit 1
+    fi
     mv ./*.dmg "../assets/${APP_NAME}.${VSCODE_ARCH}.${RELEASE_VERSION}.dmg"
     popd
   fi
