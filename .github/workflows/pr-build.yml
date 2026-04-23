@@ -1,0 +1,314 @@
+name: PR Build
+
+on:
+  issue_comment:
+    types: [created]
+  workflow_call:
+    inputs:
+      pr_number:
+        type: string
+        required: true
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: 'PR Number'
+        type: string
+        required: true
+
+jobs:
+  prepare:
+    if: |
+      github.event_name != 'issue_comment' ||
+      (github.event.issue.pull_request != null &&
+       github.event.comment.body == '/build' &&
+       (github.event.comment.author_association == 'OWNER' ||
+        github.event.comment.author_association == 'MEMBER' ||
+        github.event.comment.author_association == 'COLLABORATOR'))
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      head_sha: ${{ steps.pr.outputs.head_sha }}
+      pr_number: ${{ steps.pr.outputs.pr_number }}
+
+    steps:
+      - name: Get PR head SHA
+        id: pr
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const pr_number = context.eventName === 'issue_comment'
+              ? context.issue.number
+              : Number('${{ inputs.pr_number }}');
+            const pr = await github.rest.pulls.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: pr_number,
+            });
+            core.setOutput('head_sha', pr.data.head.sha);
+            core.setOutput('pr_number', String(pr_number));
+
+      - name: React to comment
+        if: github.event_name == 'issue_comment'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            github.rest.reactions.createForIssueComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              comment_id: context.payload.comment.id,
+              content: '+1',
+            });
+
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.pr.outputs.head_sha }}
+
+      - name: Compute version
+        id: version
+        run: |
+          MS_TAG=$(jq -r '.tag' ./upstream/stable.json)
+          SHORT_HASH=$(git rev-parse --short HEAD)
+          echo "version=${MS_TAG}-pr${{ steps.pr.outputs.pr_number }}-${SHORT_HASH}" >> "$GITHUB_OUTPUT"
+
+  build-macos:
+    needs: prepare
+    runs-on: macos-14
+    env:
+      APP_NAME: Codex Beta
+      BINARY_NAME: codex-beta
+      RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
+      CUSTOM_RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
+      VSCODE_QUALITY: stable
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.head_sha }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: '.nvmrc'
+
+      - name: Build
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CERTIFICATE_OSX_APP_PASSWORD: ${{ secrets.CERTIFICATE_OSX_APP_PASSWORD }}
+          CERTIFICATE_OSX_ID: ${{ secrets.CERTIFICATE_OSX_ID }}
+          CERTIFICATE_OSX_P12_DATA: ${{ secrets.CERTIFICATE_OSX_P12 }}
+          CERTIFICATE_OSX_P12_PASSWORD: ${{ secrets.CERTIFICATE_OSX_P12_PASSWORD }}
+          CERTIFICATE_OSX_TEAM_ID: ${{ secrets.CERTIFICATE_OSX_TEAM_ID }}
+        run: ./dev/build.sh -p
+
+      - name: Upload DMG
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-arm64
+          path: assets/*.dmg
+          retention-days: 3
+
+  # Windows build is disabled pending fixes to the cross-compile pipeline.
+  #
+  # Root causes identified so far (both fixed in env vars but not yet validated):
+  #
+  # 1. OS_NAME not set → prepare_vscode.sh evaluates "../patches/${OS_NAME}/" as
+  #    "../patches//" which matches the root patches dir, causing all patches to be
+  #    applied twice. The second application of add-remote-url.patch (and others)
+  #    fails because the files were already modified. Fix: OS_NAME: windows.
+  #
+  # 2. CI_BUILD not set → get-extensions.sh sources `set -euo pipefail` into the
+  #    calling shell, enabling nounset (-u). build.sh line 44 then hits
+  #    "${CI_BUILD}: unbound variable". Fix: CI_BUILD: 'yes' (also correctly
+  #    skips local packaging, which is handled by the separate build-windows job).
+  #
+  # After those two env vars are confirmed working, the next unknown is whether
+  # build.sh completes compilation cleanly and produces a valid vscode artifact
+  # that the build-windows packaging job can consume.
+  #
+  # compile-windows:
+  #   needs: prepare
+  #   runs-on: ubuntu-22.04
+  #   env:
+  #     APP_NAME: Codex Beta
+  #     BINARY_NAME: codex-beta
+  #     RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
+  #     CUSTOM_RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
+  #     VSCODE_ARCH: x64
+  #     VSCODE_QUALITY: stable
+  #     CI_BUILD: 'yes'
+  #     OS_NAME: windows
+  #     SHOULD_BUILD: 'yes'
+  #     SHOULD_BUILD_REH: 'no'
+  #     SHOULD_BUILD_REH_WEB: 'no'
+  #
+  #   steps:
+  #     - uses: actions/checkout@v4
+  #       with:
+  #         ref: ${{ needs.prepare.outputs.head_sha }}
+  #
+  #     - name: Setup GCC
+  #       uses: egor-tensin/setup-gcc@v1
+  #       with:
+  #         version: 10
+  #         platform: x64
+  #
+  #     - name: Setup Node.js
+  #       uses: actions/setup-node@v4
+  #       with:
+  #         node-version-file: '.nvmrc'
+  #
+  #     - name: Setup Python 3
+  #       uses: actions/setup-python@v5
+  #       with:
+  #         python-version: '3.11'
+  #
+  #     - name: Install libkrb5-dev
+  #       run: sudo apt-get update -y && sudo apt-get install -y libkrb5-dev
+  #
+  #     - name: Clone VSCode repo
+  #       run: ./get_repo.sh
+  #
+  #     - name: Build
+  #       env:
+  #         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+  #       run: ./build.sh
+  #
+  #     - name: Compress vscode artifact
+  #       run: |
+  #         find vscode -type f \
+  #           -not -path "*/node_modules/*" \
+  #           -not -path "vscode/.build/node/*" \
+  #           -not -path "vscode/.git/*" > vscode.txt
+  #         [ -d "vscode/.build/extensions/node_modules" ] && echo "vscode/.build/extensions/node_modules" >> vscode.txt
+  #         echo "vscode/.git" >> vscode.txt
+  #         tar -czf vscode.tar.gz -T vscode.txt
+  #
+  #     - name: Upload vscode artifact
+  #       uses: actions/upload-artifact@v4
+  #       with:
+  #         name: vscode-compiled
+  #         path: ./vscode.tar.gz
+  #         retention-days: 1
+  #
+  # build-windows:
+  #   needs: [prepare, compile-windows]
+  #   runs-on: windows-2022
+  #   defaults:
+  #     run:
+  #       shell: bash
+  #   env:
+  #     APP_NAME: Codex Beta
+  #     BINARY_NAME: codex-beta
+  #     RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
+  #     CUSTOM_RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
+  #     VSCODE_ARCH: x64
+  #     VSCODE_QUALITY: stable
+  #
+  #   steps:
+  #     - uses: actions/checkout@v4
+  #       with:
+  #         ref: ${{ needs.prepare.outputs.head_sha }}
+  #
+  #     - name: Setup Node.js
+  #       uses: actions/setup-node@v4
+  #       with:
+  #         node-version-file: '.nvmrc'
+  #
+  #     - name: Setup Python 3
+  #       uses: actions/setup-python@v5
+  #       with:
+  #         python-version: '3.11'
+  #
+  #     - name: Download compiled vscode
+  #       uses: actions/download-artifact@v4
+  #       with:
+  #         name: vscode-compiled
+  #
+  #     - name: Extract vscode artifact
+  #       run: tar -xzf vscode.tar.gz
+  #
+  #     - name: Build Windows package
+  #       env:
+  #         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+  #         npm_config_arch: x64
+  #         npm_config_target_arch: x64
+  #       run: ./build/windows/package.sh
+  #
+  #     - name: Prepare assets
+  #       run: ./prepare_assets.sh
+  #
+  #     - name: Upload Windows artifacts
+  #       uses: actions/upload-artifact@v4
+  #       with:
+  #         name: windows-x64
+  #         path: |
+  #           assets/*.exe
+  #           assets/*.msi
+  #         retention-days: 3
+
+  release:
+    needs: [prepare, build-macos]
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ secrets.STRONGER_GITHUB_TOKEN }}
+      VERSION: ${{ needs.prepare.outputs.version }}
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.head_sha }}
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts/
+
+      - name: Create prerelease
+        run: |
+          gh release create "$VERSION" \
+            --target "${{ needs.prepare.outputs.head_sha }}" \
+            --prerelease \
+            --title "Codex Beta $VERSION" \
+            --generate-notes \
+            artifacts/macos-arm64/*.dmg
+
+      - name: Comment on PR
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          RELEASE_URL="https://github.com/${{ github.repository }}/releases/tag/${VERSION}"
+          gh pr comment "${{ needs.prepare.outputs.pr_number }}" \
+            --body "Pre-release: ${VERSION} ${RELEASE_URL}"
+
+      - name: React with rocket on success
+        if: success() && github.event_name == 'issue_comment'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh api "repos/${{ github.repository }}/issues/comments/${{ github.event.comment.id }}/reactions" \
+            --method POST -f content='rocket'
+
+  notify-failure:
+    needs: [prepare, build-macos, release]
+    if: always() && contains(needs.*.result, 'failure')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Handle failure
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          RUN_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          if [ "${{ github.event_name }}" = "issue_comment" ]; then
+            PR_NUMBER="${{ github.event.issue.number }}"
+          else
+            PR_NUMBER="${{ inputs.pr_number }}"
+          fi
+          
+          if [[ -n "$PR_NUMBER" ]]; then
+            gh pr comment "${PR_NUMBER}" --body "Build failed: ${RUN_URL}"
+          fi
+          
+          if [ "${{ github.event_name }}" = "issue_comment" ]; then
+            gh api "repos/${{ github.repository }}/issues/comments/${{ github.event.comment.id }}/reactions" \
+              --method POST -f content='-1'
+          fi
