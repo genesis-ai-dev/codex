@@ -19,6 +19,22 @@ import { URI } from '../../../../base/common/uri.js';
 
 const TAG = '[CodexSideloader]';
 
+/**
+ * SCOPE EXPLANATION:
+ * 
+ * 1. isApplicationScoped: true
+ *    Makes the extension "global" at the application level. By default, extensions
+ *    installed in the Default profile are hidden from custom profiles (like those
+ *    created by CodexConductor for pinning). Marking them as application-scoped
+ *    ensures they are visible and active across all profiles.
+ * 
+ * 2. isMachineScoped: true
+ *    Marks the extension as local to this machine. This prevents VS Code's 
+ *    Settings Sync from attempting to sync these product-managed extensions. 
+ *    Crucially, it also suppresses modal "Sync this extension?" prompts during 
+ *    startup, ensuring the sideloader remains non-interactive.
+ */
+
 /** A string means "install from gallery by ID". An object with `vsix` means "install directly from URL". */
 interface SideloadVsixEntry {
 	id: string;
@@ -93,15 +109,15 @@ export class CodexSideloaderContribution extends Disposable implements IWorkbenc
 
 		for (const entry of entries) {
 			if (typeof entry === 'string') {
-				// Gallery entry: skip if ID is present (any version)
-				const found = installed.some(e => e.identifier.id.toLowerCase() === entry.toLowerCase());
-				if (!found) {
+				// Gallery entry: skip only if ID is present AND it has the correct scopes
+				const found = installed.find(e => e.identifier.id.toLowerCase() === entry.toLowerCase());
+				if (!found || !found.isApplicationScoped || !found.isMachineScoped) {
 					missingGallery.push(entry);
 				}
 			} else {
-				// VSIX entry: skip only if ID AND version match
+				// VSIX entry: skip only if ID AND version match AND it has the correct scopes
 				const installedExt = installed.find(e => e.identifier.id.toLowerCase() === entry.id.toLowerCase());
-				if (!installedExt || installedExt.manifest.version !== entry.version) {
+				if (!installedExt || installedExt.manifest.version !== entry.version || !installedExt.isApplicationScoped || !installedExt.isMachineScoped) {
 					missingVsix.push(entry);
 				}
 			}
@@ -145,7 +161,10 @@ export class CodexSideloaderContribution extends Disposable implements IWorkbenc
 			}
 
 			try {
-				await this.extensionManagementService.installFromGallery(galleryExt, { isMachineScoped: true });
+				await this.extensionManagementService.installFromGallery(galleryExt, {
+					isApplicationScoped: true,
+					isMachineScoped: true
+				});
 				this.logService.info(`${TAG} Installed "${id}" v${galleryExt.version}`);
 			} catch (err) {
 				this.logService.error(`${TAG} Failed to install "${id}"`, err);
@@ -173,6 +192,7 @@ export class CodexSideloaderContribution extends Disposable implements IWorkbenc
 				await channel.call('install', [URI.parse(entry.vsix), {
 					installGivenVersion: true,
 					pinned: true,
+					isApplicationScoped: true,
 					isMachineScoped: true,
 					profileLocation: this.userDataProfilesService.defaultProfile.extensionsResource,
 				}]);
