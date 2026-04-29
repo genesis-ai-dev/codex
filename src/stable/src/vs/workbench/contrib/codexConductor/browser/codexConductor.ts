@@ -10,6 +10,7 @@ import { IWorkspaceContextService, WorkbenchState, toWorkspaceIdentifier, isSing
 import { IUserDataProfileService } from '../../../services/userDataProfile/common/userDataProfile.js';
 import { IUserDataProfile, IUserDataProfilesService } from '../../../../platform/userDataProfile/common/userDataProfile.js';
 import { IWorkbenchExtensionManagementService } from '../../../services/extensionManagement/common/extensionManagement.js';
+import { IExtensionGalleryService } from '../../../../platform/extensionManagement/common/extensionManagement.js';
 import { IStorageService, StorageScope, StorageTarget } from '../../../../platform/storage/common/storage.js';
 import { INotificationService, Severity } from '../../../../platform/notification/common/notification.js';
 import { URI } from '../../../../base/common/uri.js';
@@ -27,6 +28,7 @@ import { IClipboardService } from '../../../../platform/clipboard/common/clipboa
 import { IProductService } from '../../../../platform/product/common/productService.js';
 import { OS, OperatingSystem } from '../../../../base/common/platform.js';
 import { timeout } from '../../../../base/common/async.js';
+import { CancellationToken } from '../../../../base/common/cancellation.js';
 import { PinnedExtensions, RequiredExtensions, ProjectMetadata, parsePinnedExtensions } from './codexTypes.js';
 
 /** Maps profile name → array of project folder URIs that reference it. */
@@ -38,6 +40,12 @@ const CIRCUIT_BREAKER_MAX = 3;
 const CIRCUIT_BREAKER_WINDOW_MS = 30_000;
 const CONDUCTOR_PROFILE_ICON = 'repo-pinned';
 const FRONTIER_EXTENSION_ID = 'frontier-rnd.frontier-authentication';
+const CORE_EXTENSION_IDS = [
+	CODEX_EDITOR_EXTENSION_ID,
+	FRONTIER_EXTENSION_ID,
+	'project-accelerate.shared-state-store',
+	'project-accelerate.vscode-edit-table',
+];
 const PROFILE_ASSOCIATIONS_KEY = 'codex.conductor.profileAssociations';
 const LAST_CLEANUP_KEY = 'codex.conductor.lastCleanup';
 const CLEANUP_INTERVAL_MS = 14 * 24 * 60 * 60 * 1000; // 14 days
@@ -66,6 +74,7 @@ export class CodexConductorContribution extends Disposable implements IWorkbench
 		@IUserDataProfileService private readonly userDataProfileService: IUserDataProfileService,
 		@IUserDataProfilesService private readonly userDataProfilesService: IUserDataProfilesService,
 		@IWorkbenchExtensionManagementService private readonly extensionManagementService: IWorkbenchExtensionManagementService,
+		@IExtensionGalleryService private readonly extensionGalleryService: IExtensionGalleryService,
 		@IStorageService private readonly storageService: IStorageService,
 		@INotificationService private readonly notificationService: INotificationService,
 		@IHostService private readonly hostService: IHostService,
@@ -259,6 +268,7 @@ export class CodexConductorContribution extends Disposable implements IWorkbench
 
 			try {
 				await this.installPinnedExtensions(pins, profile);
+				await this.installCoreExtensionsFromGallery(profile, new Set(Object.keys(pins).map(id => id.toLowerCase())));
 			} catch (e: unknown) {
 				// Installation failed after all retries — cleanup the incomplete profile
 				// (only if it's not the current profile, which cannot be deleted).
@@ -310,7 +320,16 @@ export class CodexConductorContribution extends Disposable implements IWorkbench
 		// networking which handles redirects without CORS restrictions.
 		const channel = this.sharedProcessService.getChannel('extensions');
 
+		// Inspect current state of the profile to avoid redundant/failing reinstalls
+		const installed = await this.extensionManagementService.getInstalled(undefined, profile.extensionsResource);
+
 		for (const [id, pin] of Object.entries(pins)) {
+			const existing = installed.find(e => e.identifier.id.toLowerCase() === id.toLowerCase());
+			if (existing && existing.manifest.version === pin.version) {
+				this.logService.info(`[CodexConductor] Pinned extension "${id}" v${pin.version} already installed in profile "${profile.name}" — skipping VSIX download`);
+				continue;
+			}
+
 			let lastError: Error | undefined;
 			for (let attempt = 1; attempt <= 3; attempt++) {
 				try {
@@ -496,6 +515,13 @@ export class CodexConductorContribution extends Disposable implements IWorkbench
 			}
 		}
 
+		// Core suite must be present even if unpinned
+		for (const id of CORE_EXTENSION_IDS) {
+			if (!installed.find(e => e.identifier.id.toLowerCase() === id.toLowerCase())) {
+				mismatches.push(`${id}: core extension missing`);
+			}
+		}
+
 		if (mismatches.length === 0) {
 			return;
 		}
@@ -541,6 +567,7 @@ export class CodexConductorContribution extends Disposable implements IWorkbench
 
 		try {
 			await this.installPinnedExtensions(pins, profile);
+			await this.installCoreExtensionsFromGallery(profile, new Set(Object.keys(pins).map(id => id.toLowerCase())));
 		} catch (e: unknown) {
 			// Installation failed after all retries — cleanup the incomplete profile
 			// (only if it's not the current profile, which cannot be deleted).
@@ -801,6 +828,14 @@ export class CodexConductorContribution extends Disposable implements IWorkbench
 					return false;
 				}
 			}
+
+			// Core suite must be present even if unpinned
+			for (const id of CORE_EXTENSION_IDS) {
+				if (!installed.find(e => e.identifier.id.toLowerCase() === id.toLowerCase())) {
+					return false;
+				}
+			}
+
 			return true;
 		} catch {
 			return false;
@@ -958,6 +993,47 @@ export class CodexConductorContribution extends Disposable implements IWorkbench
 		const profile = this.userDataProfilesService.profiles.find(p => p.isDefault);
 		if (profile) {
 			await this.switchProfileAndReload(profile);
+		}
+	}
+
+	private async installCoreExtensionsFromGallery(profile: IUserDataProfile, pinnedIds: Set<string>): Promise<void> {
+		const installed = await this.extensionManagementService.getInstalled(undefined, profile.extensionsResource);
+		const toInstall = CORE_EXTENSION_IDS.filter(id => {
+			if (pinnedIds.has(id.toLowerCase())) { return false; }
+			return !installed.find(e => e.identifier.id.toLowerCase() === id.toLowerCase());
+		});
+
+		if (toInstall.length === 0) {
+			return;
+		}
+
+		this.logService.info(`[CodexConductor] Backfilling ${toInstall.length} core extension(s) from gallery into profile "${profile.name}"`);
+
+		if (!this.extensionGalleryService.isEnabled()) {
+			throw new Error('Extension gallery is disabled — cannot backfill core extensions');
+		}
+
+		const galleryExtensions = await this.extensionGalleryService.getExtensions(
+			toInstall.map(id => ({ id })),
+			CancellationToken.None
+		);
+
+		for (const id of toInstall) {
+			const galleryExt = galleryExtensions.find(e => e.identifier.id.toLowerCase() === id.toLowerCase());
+			if (!galleryExt) {
+				throw new Error(`Core extension "${id}" not found in gallery`);
+			}
+
+			try {
+				await this.extensionManagementService.installFromGallery(galleryExt, {
+					profileLocation: profile.extensionsResource,
+					isMachineScoped: true
+				});
+				this.logService.info(`[CodexConductor] Backfilled "${galleryExt.identifier.id}" v${galleryExt.version}`);
+			} catch (err) {
+				this.logService.error(`[CodexConductor] Failed to backfill "${galleryExt.identifier.id}"`, err);
+				throw err;
+			}
 		}
 	}
 }
