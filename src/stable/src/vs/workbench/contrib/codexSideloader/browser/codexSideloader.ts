@@ -16,34 +16,9 @@ import { IUserDataProfilesService } from '../../../../platform/userDataProfile/c
 import { CancellationToken } from '../../../../base/common/cancellation.js';
 import { ExtensionType } from '../../../../platform/extensions/common/extensions.js';
 import { URI } from '../../../../base/common/uri.js';
+import { SideloadEntry, SideloadVsixEntry, parseSideloadEntries } from '../../codexConductor/browser/codexTypes.js';
 
 const TAG = '[CodexSideloader]';
-
-/** A string means "install from gallery by ID". An object with `vsix` means "install directly from URL". */
-interface SideloadVsixEntry {
-	id: string;
-	vsix: string;
-	version: string;
-}
-
-type SideloadEntry = string | SideloadVsixEntry;
-
-function parseSideloadEntries(raw: unknown[]): SideloadEntry[] {
-	const entries: SideloadEntry[] = [];
-	for (const item of raw) {
-		if (typeof item === 'string') {
-			entries.push(item);
-		} else if (
-			item && typeof item === 'object' &&
-			typeof (item as Record<string, unknown>).id === 'string' &&
-			typeof (item as Record<string, unknown>).vsix === 'string' &&
-			typeof (item as Record<string, unknown>).version === 'string'
-		) {
-			entries.push(item as SideloadVsixEntry);
-		}
-	}
-	return entries;
-}
 
 export class CodexSideloaderContribution extends Disposable implements IWorkbenchContribution {
 
