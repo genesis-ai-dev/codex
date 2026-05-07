@@ -1,0 +1,9 @@
+diff --git a/src/vs/platform/extensionManagement/node/extensionManagementService.ts b/src/vs/platform/extensionManagement/node/extensionManagementService.ts
+index 84bbc73..322a6bb 100644
+--- a/src/vs/platform/extensionManagement/node/extensionManagementService.ts
++++ b/src/vs/platform/extensionManagement/node/extensionManagementService.ts
+@@ -1046,3 +1046,3 @@ class InstallExtensionInProfileTask extends AbstractExtensionTask<ILocalExtensio
+ 		const metadata: Metadata = {
+-			isApplicationScoped: this.options.isApplicationScoped || existingExtension?.isApplicationScoped,
++			isApplicationScoped: this.options.isApplicationScoped ?? existingExtension?.isApplicationScoped,
+ 			isMachineScoped: this.options.isMachineScoped || existingExtension?.isMachineScoped,

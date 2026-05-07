@@ -338,9 +338,20 @@ export class CodexConductorContribution extends Disposable implements IWorkbench
 				try {
 					this.logService.info(`[CodexConductor] Installing pinned VSIX for "${id}" v${pin.version} from ${pin.url} (attempt ${attempt}/3)`);
 
+					// `isApplicationScoped: false` is explicit (not omitted)
+					// because the upstream install task inherits this flag from
+					// any existing installation of the same extension — see the
+					// patched line at extensionManagementService.ts:1047 (`??`
+					// semantics). If a sideloaded copy in the Default profile
+					// were marked app-scoped, the conductor's pin would inherit
+					// that flag, get filtered out of its own profile by the
+					// scanner, and post-install verification would fail with
+					// "Cannot read the extension from …". Forcing `false` keeps
+					// the pin scoped to its conductor profile.
 					await channel.call('install', [URI.parse(pin.url), {
 						installGivenVersion: true,
 						pinned: true,
+						isApplicationScoped: false,
 						profileLocation: profile.extensionsResource
 					}]);
 					lastError = undefined;
@@ -1092,8 +1103,11 @@ export class CodexConductorContribution extends Disposable implements IWorkbench
 				}
 
 				try {
+					// See installPinnedExtensions for why
+					// `isApplicationScoped: false` is explicit.
 					await this.extensionManagementService.installFromGallery(galleryExt, {
 						profileLocation: profile.extensionsResource,
+						isApplicationScoped: false,
 						isMachineScoped: true
 					});
 					this.logService.info(`[CodexConductor] Backfilled "${galleryExt.identifier.id}" v${galleryExt.version} from gallery`);
@@ -1108,9 +1122,12 @@ export class CodexConductorContribution extends Disposable implements IWorkbench
 			const channel = this.sharedProcessService.getChannel('extensions');
 			for (const entry of missingVsix) {
 				try {
+					// See installPinnedExtensions for why
+					// `isApplicationScoped: false` is explicit.
 					await channel.call('install', [URI.parse(entry.vsix), {
 						installGivenVersion: true,
 						pinned: true,
+						isApplicationScoped: false,
 						isMachineScoped: true,
 						profileLocation: profile.extensionsResource,
 					}]);
