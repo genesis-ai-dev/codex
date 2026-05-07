@@ -591,10 +591,18 @@ export class CodexConductorContribution extends Disposable implements IWorkbench
 		const profile = existingProfile
 			?? await this.userDataProfilesService.createNamedProfile(targetProfileName, { icon: CONDUCTOR_PROFILE_ICON });
 
+		const progressHandle = this.notificationService.notify({
+			severity: Severity.Info,
+			message: 'Installing pinned extension…',
+			progress: { infinite: true }
+		});
+
 		try {
 			await this.installPinnedExtensions(pins, profile);
 			await this.backfillCoreExtensions(profile, new Set(Object.keys(pins).map(id => id.toLowerCase())));
 		} catch (e: unknown) {
+			progressHandle.close();
+
 			// Installation failed after all retries — cleanup the incomplete profile
 			// (only if it's not the current profile, which cannot be deleted).
 			if (profile.id !== this.userDataProfileService.currentProfile.id) {
@@ -619,6 +627,8 @@ export class CodexConductorContribution extends Disposable implements IWorkbench
 			);
 			return;
 		}
+
+		progressHandle.close();
 
 		// forceReload: we installed/backfilled extensions into `profile`. If
 		// `profile` is the current profile (repair path — existing profile with
