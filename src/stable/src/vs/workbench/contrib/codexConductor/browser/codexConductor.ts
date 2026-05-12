@@ -10,6 +10,7 @@ import { IWorkspaceContextService, WorkbenchState, toWorkspaceIdentifier, isSing
 import { IUserDataProfileService } from '../../../services/userDataProfile/common/userDataProfile.js';
 import { IUserDataProfile, IUserDataProfilesService } from '../../../../platform/userDataProfile/common/userDataProfile.js';
 import { IWorkbenchExtensionManagementService } from '../../../services/extensionManagement/common/extensionManagement.js';
+import { IExtensionGalleryService } from '../../../../platform/extensionManagement/common/extensionManagement.js';
 import { IStorageService, StorageScope, StorageTarget } from '../../../../platform/storage/common/storage.js';
 import { INotificationService, Severity } from '../../../../platform/notification/common/notification.js';
 import { URI } from '../../../../base/common/uri.js';
@@ -27,17 +28,16 @@ import { IClipboardService } from '../../../../platform/clipboard/common/clipboa
 import { IProductService } from '../../../../platform/product/common/productService.js';
 import { OS, OperatingSystem } from '../../../../base/common/platform.js';
 import { timeout } from '../../../../base/common/async.js';
-import { PinnedExtensions, RequiredExtensions, ProjectMetadata, parsePinnedExtensions } from './codexTypes.js';
+import { CancellationToken } from '../../../../base/common/cancellation.js';
+import { PinnedExtensions, RequiredExtensions, ProjectMetadata, parsePinnedExtensions, SideloadEntry, SideloadVsixEntry, parseSideloadEntries } from './codexTypes.js';
 
 /** Maps profile name → array of project folder URIs that reference it. */
 type ProfileAssociations = Record<string, string[]>;
 
-const CODEX_EDITOR_EXTENSION_ID = 'project-accelerate.codex-editor-extension';
 const CIRCUIT_BREAKER_KEY = 'codex.conductor.enforcementAttempts';
 const CIRCUIT_BREAKER_MAX = 3;
 const CIRCUIT_BREAKER_WINDOW_MS = 30_000;
 const CONDUCTOR_PROFILE_ICON = 'repo-pinned';
-const FRONTIER_EXTENSION_ID = 'frontier-rnd.frontier-authentication';
 const PROFILE_ASSOCIATIONS_KEY = 'codex.conductor.profileAssociations';
 const LAST_CLEANUP_KEY = 'codex.conductor.lastCleanup';
 const CLEANUP_INTERVAL_MS = 14 * 24 * 60 * 60 * 1000; // 14 days
@@ -66,6 +66,7 @@ export class CodexConductorContribution extends Disposable implements IWorkbench
 		@IUserDataProfileService private readonly userDataProfileService: IUserDataProfileService,
 		@IUserDataProfilesService private readonly userDataProfilesService: IUserDataProfilesService,
 		@IWorkbenchExtensionManagementService private readonly extensionManagementService: IWorkbenchExtensionManagementService,
+		@IExtensionGalleryService private readonly extensionGalleryService: IExtensionGalleryService,
 		@IStorageService private readonly storageService: IStorageService,
 		@INotificationService private readonly notificationService: INotificationService,
 		@IHostService private readonly hostService: IHostService,
@@ -123,6 +124,14 @@ export class CodexConductorContribution extends Disposable implements IWorkbench
 		this._register(this.workspaceContextService.onDidChangeWorkbenchState(() => this.initialize()));
 
 		this.initialize();
+	}
+
+	private getCoreExtensionEntries(): SideloadEntry[] {
+		const configured = (this.productService as unknown as Record<string, unknown>)['codexSideloadExtensions'];
+		if (!Array.isArray(configured)) {
+			return [];
+		}
+		return parseSideloadEntries(configured);
 	}
 
 	private async initialize(): Promise<void> {
@@ -259,6 +268,7 @@ export class CodexConductorContribution extends Disposable implements IWorkbench
 
 			try {
 				await this.installPinnedExtensions(pins, profile);
+				await this.backfillCoreExtensions(profile, new Set(Object.keys(pins).map(id => id.toLowerCase())));
 			} catch (e: unknown) {
 				// Installation failed after all retries — cleanup the incomplete profile
 				// (only if it's not the current profile, which cannot be deleted).
@@ -275,9 +285,12 @@ export class CodexConductorContribution extends Disposable implements IWorkbench
 
 			handle.close();
 
+			// forceReload: we just installed/backfilled into `profile`. If the
+			// user happens to already be on it, the default skip-when-IDs-match
+			// path would leave the new extensions inactive until manual reload.
 			if (reloadWhenReady) {
 				// User already opted in — reload immediately
-				await this.switchProfileAndReload(profile);
+				await this.switchProfileAndReload(profile, true);
 			} else {
 				// Show completion notification with reload button
 				this.notificationService.prompt(
@@ -285,7 +298,7 @@ export class CodexConductorContribution extends Disposable implements IWorkbench
 					'Pinned extension installed. Reload to apply.',
 					[{
 						label: 'Reload Codex',
-						run: () => this.switchProfileAndReload(profile)
+						run: () => this.switchProfileAndReload(profile, true)
 					}]
 				);
 			}
@@ -310,15 +323,35 @@ export class CodexConductorContribution extends Disposable implements IWorkbench
 		// networking which handles redirects without CORS restrictions.
 		const channel = this.sharedProcessService.getChannel('extensions');
 
+		// Inspect current state of the profile to avoid redundant/failing reinstalls
+		const installed = await this.extensionManagementService.getInstalled(undefined, profile.extensionsResource);
+
 		for (const [id, pin] of Object.entries(pins)) {
+			const existing = installed.find(e => e.identifier.id.toLowerCase() === id.toLowerCase());
+			if (existing && existing.manifest.version === pin.version) {
+				this.logService.info(`[CodexConductor] Pinned extension "${id}" v${pin.version} already installed in profile "${profile.name}" — skipping VSIX download`);
+				continue;
+			}
+
 			let lastError: Error | undefined;
 			for (let attempt = 1; attempt <= 3; attempt++) {
 				try {
 					this.logService.info(`[CodexConductor] Installing pinned VSIX for "${id}" v${pin.version} from ${pin.url} (attempt ${attempt}/3)`);
 
+					// `isApplicationScoped: false` is explicit (not omitted)
+					// because the upstream install task inherits this flag from
+					// any existing installation of the same extension — see the
+					// patched line at extensionManagementService.ts:1047 (`??`
+					// semantics). If a sideloaded copy in the Default profile
+					// were marked app-scoped, the conductor's pin would inherit
+					// that flag, get filtered out of its own profile by the
+					// scanner, and post-install verification would fail with
+					// "Cannot read the extension from …". Forcing `false` keeps
+					// the pin scoped to its conductor profile.
 					await channel.call('install', [URI.parse(pin.url), {
 						installGivenVersion: true,
 						pinned: true,
+						isApplicationScoped: false,
 						profileLocation: profile.extensionsResource
 					}]);
 					lastError = undefined;
@@ -364,14 +397,18 @@ export class CodexConductorContribution extends Disposable implements IWorkbench
 
 	private async logStartupExtensionState(): Promise<void> {
 		const installed = await this.extensionManagementService.getInstalled();
-		const codexEditorVersion = installed.find(e => e.identifier.id.toLowerCase() === CODEX_EDITOR_EXTENSION_ID)?.manifest.version ?? 'not installed';
-		const frontierAuthVersion = installed.find(e => e.identifier.id.toLowerCase() === FRONTIER_EXTENSION_ID)?.manifest.version ?? 'not installed';
+		const coreVersions = this.getCoreExtensionEntries().map(entry => {
+			const id = typeof entry === 'string' ? entry : entry.id;
+			const version = installed.find(e => e.identifier.id.toLowerCase() === id.toLowerCase())?.manifest.version ?? 'not installed';
+			return `${id}=${version}`;
+		}).join(', ');
+
 		const currentProfileName = this.userDataProfileService.currentProfile.name;
 		const requiredExtensions = await this.readRequiredExtensionsFromMetadata();
 		const pinnedExtensions = await this.readEffectivePinnedExtensions();
 
 		this.logService.info(
-			`[CodexConductor] Startup extension state — profile=${currentProfileName}, ${CODEX_EDITOR_EXTENSION_ID}=${codexEditorVersion}, ${FRONTIER_EXTENSION_ID}=${frontierAuthVersion}, pinnedExtensions=${this.formatObjectForLog(pinnedExtensions)}, requiredExtensions=${this.formatObjectForLog(requiredExtensions)}`
+			`[CodexConductor] Startup extension state — profile=${currentProfileName}, ${coreVersions}, pinnedExtensions=${this.formatObjectForLog(pinnedExtensions)}, requiredExtensions=${this.formatObjectForLog(requiredExtensions)}`
 		);
 	}
 
@@ -496,6 +533,21 @@ export class CodexConductorContribution extends Disposable implements IWorkbench
 			}
 		}
 
+		// Core suite must be present even if unpinned
+		const pinnedLower = new Set(Object.keys(pins).map(id => id.toLowerCase()));
+		for (const entry of this.getCoreExtensionEntries()) {
+			const id = typeof entry === 'string' ? entry : entry.id;
+			if (pinnedLower.has(id.toLowerCase())) {
+				continue;
+			}
+			const installedExt = installed.find(e => e.identifier.id.toLowerCase() === id.toLowerCase());
+			if (!installedExt) {
+				mismatches.push(`${id}: core extension missing`);
+			} else if (typeof entry !== 'string' && installedExt.manifest.version !== entry.version) {
+				mismatches.push(`${id}: core extension version mismatch (expected ${entry.version}, found ${installedExt.manifest.version})`);
+			}
+		}
+
 		if (mismatches.length === 0) {
 			return;
 		}
@@ -539,9 +591,18 @@ export class CodexConductorContribution extends Disposable implements IWorkbench
 		const profile = existingProfile
 			?? await this.userDataProfilesService.createNamedProfile(targetProfileName, { icon: CONDUCTOR_PROFILE_ICON });
 
+		const progressHandle = this.notificationService.notify({
+			severity: Severity.Info,
+			message: 'Installing pinned extension…',
+			progress: { infinite: true }
+		});
+
 		try {
 			await this.installPinnedExtensions(pins, profile);
+			await this.backfillCoreExtensions(profile, new Set(Object.keys(pins).map(id => id.toLowerCase())));
 		} catch (e: unknown) {
+			progressHandle.close();
+
 			// Installation failed after all retries — cleanup the incomplete profile
 			// (only if it's not the current profile, which cannot be deleted).
 			if (profile.id !== this.userDataProfileService.currentProfile.id) {
@@ -567,7 +628,14 @@ export class CodexConductorContribution extends Disposable implements IWorkbench
 			return;
 		}
 
-		await this.switchProfileAndReload(profile);
+		progressHandle.close();
+
+		// forceReload: we installed/backfilled extensions into `profile`. If
+		// `profile` is the current profile (repair path — existing profile with
+		// missing extensions), the default "skip-when-IDs-match" reload behaviour
+		// would leave the new extensions on disk but unactivated until the next
+		// manual reload.
+		await this.switchProfileAndReload(profile, true);
 	}
 
 	private async revertIfPatchBuild(): Promise<void> {
@@ -801,6 +869,23 @@ export class CodexConductorContribution extends Disposable implements IWorkbench
 					return false;
 				}
 			}
+
+			// Core suite must be present even if unpinned
+			const pinnedLower = new Set(Object.keys(pins).map(id => id.toLowerCase()));
+			for (const entry of this.getCoreExtensionEntries()) {
+				const id = typeof entry === 'string' ? entry : entry.id;
+				if (pinnedLower.has(id.toLowerCase())) {
+					continue;
+				}
+				const installedExt = installed.find(e => e.identifier.id.toLowerCase() === id.toLowerCase());
+				if (!installedExt) {
+					return false;
+				}
+				if (typeof entry !== 'string' && installedExt.manifest.version !== entry.version) {
+					return false;
+				}
+			}
+
 			return true;
 		} catch {
 			return false;
@@ -915,14 +1000,20 @@ export class CodexConductorContribution extends Disposable implements IWorkbench
 	 * to make the switch effective. If the extension host restart is vetoed (e.g.
 	 * a custom editor like Startup Flow is open), switchProfile() throws
 	 * CancellationError and reverts the association — reload handles that too.
+	 *
+	 * Pass `forceReload = true` when extensions were installed/updated in the
+	 * target profile during this call, even if the user is already on it. Without
+	 * a reload, freshly installed extensions whose activation events have already
+	 * passed (e.g. `onStartupFinished`) won't activate until the next manual
+	 * reload, leaving the profile silently degraded.
 	 */
-	private async switchProfileAndReload(profile: IUserDataProfile): Promise<void> {
+	private async switchProfileAndReload(profile: IUserDataProfile, forceReload = false): Promise<void> {
 		const workspace = this.workspaceContextService.getWorkspace();
 		const workspaceIdentifier = toWorkspaceIdentifier(workspace);
 		const originalProfileId = this.userDataProfileService.currentProfile.id;
 		const currentProfileName = this.userDataProfileService.currentProfile.name;
 
-		this.logService.info(`[CodexConductor] switchProfileAndReload: current=${currentProfileName}, target=${profile.name}`);
+		this.logService.info(`[CodexConductor] switchProfileAndReload: current=${currentProfileName}, target=${profile.name}, forceReload=${forceReload}`);
 
 		// Ensure the target conductor profile has update-checks disabled before
 		// the reload commits. Harmless (no-op) for the default profile.
@@ -946,8 +1037,11 @@ export class CodexConductorContribution extends Disposable implements IWorkbench
 		// setProfileForWorkspace may internally trigger changeCurrentProfile which
 		// updates currentProfile even if the extension host vetos the switch. Using
 		// the post-call currentProfile.id would incorrectly skip the reload.
-		if (originalProfileId !== profile.id) {
-			this.logService.info(`[CodexConductor] Profile mismatch (${currentProfileName} != ${profile.name}) — triggering authoritative reload`);
+		if (forceReload || originalProfileId !== profile.id) {
+			const reason = originalProfileId !== profile.id
+				? `profile mismatch (${currentProfileName} != ${profile.name})`
+				: `extensions installed in current profile`;
+			this.logService.info(`[CodexConductor] ${reason} — triggering authoritative reload`);
 			this.hostService.reload({ forceProfile: profile.name });
 		} else {
 			this.logService.info(`[CodexConductor] Already on target profile ${profile.name} — no reload needed`);
@@ -958,6 +1052,101 @@ export class CodexConductorContribution extends Disposable implements IWorkbench
 		const profile = this.userDataProfilesService.profiles.find(p => p.isDefault);
 		if (profile) {
 			await this.switchProfileAndReload(profile);
+		}
+	}
+
+	/**
+	 * Installs core (sideload) extensions into a conductor-managed profile.
+	 *
+	 * Fail-fast by design: the sideloader's best-effort behaviour (warn + skip on
+	 * any failure) is wrong here because the resulting profile would be silently
+	 * incomplete, and the user couldn't sync, edit, or otherwise function. By
+	 * throwing, we let the caller's catch block remove the half-built profile;
+	 * the next window open will re-attempt enforcement, and the integrity check
+	 * in `validateProfileExtensions` will detect any residual incompleteness.
+	 */
+	private async backfillCoreExtensions(profile: IUserDataProfile, pinnedIds: Set<string>): Promise<void> {
+		const installed = await this.extensionManagementService.getInstalled(undefined, profile.extensionsResource);
+		const coreEntries = this.getCoreExtensionEntries();
+
+		const missingGallery: string[] = [];
+		const missingVsix: SideloadVsixEntry[] = [];
+
+		for (const entry of coreEntries) {
+			const id = typeof entry === 'string' ? entry : entry.id;
+			if (pinnedIds.has(id.toLowerCase())) {
+				continue;
+			}
+
+			const installedExt = installed.find(e => e.identifier.id.toLowerCase() === id.toLowerCase());
+			if (typeof entry === 'string') {
+				if (!installedExt) {
+					missingGallery.push(entry);
+				}
+			} else {
+				if (!installedExt || installedExt.manifest.version !== entry.version) {
+					missingVsix.push(entry);
+				}
+			}
+		}
+
+		if (missingGallery.length === 0 && missingVsix.length === 0) {
+			return;
+		}
+
+		this.logService.info(`[CodexConductor] Backfilling core extension(s) into profile "${profile.name}": ${missingGallery.length} from gallery, ${missingVsix.length} from VSIX`);
+
+		if (missingGallery.length > 0) {
+			if (!this.extensionGalleryService.isEnabled()) {
+				throw new Error('Extension gallery is disabled — cannot backfill core extensions from gallery');
+			}
+
+			const galleryExtensions = await this.extensionGalleryService.getExtensions(
+				missingGallery.map(id => ({ id })),
+				CancellationToken.None
+			);
+
+			for (const id of missingGallery) {
+				const galleryExt = galleryExtensions.find(e => e.identifier.id.toLowerCase() === id.toLowerCase());
+				if (!galleryExt) {
+					throw new Error(`Core extension "${id}" not found in gallery`);
+				}
+
+				try {
+					// See installPinnedExtensions for why
+					// `isApplicationScoped: false` is explicit.
+					await this.extensionManagementService.installFromGallery(galleryExt, {
+						profileLocation: profile.extensionsResource,
+						isApplicationScoped: false,
+						isMachineScoped: true
+					});
+					this.logService.info(`[CodexConductor] Backfilled "${galleryExt.identifier.id}" v${galleryExt.version} from gallery`);
+				} catch (err) {
+					this.logService.error(`[CodexConductor] Failed to backfill "${galleryExt.identifier.id}" from gallery`, err);
+					throw err;
+				}
+			}
+		}
+
+		if (missingVsix.length > 0) {
+			const channel = this.sharedProcessService.getChannel('extensions');
+			for (const entry of missingVsix) {
+				try {
+					// See installPinnedExtensions for why
+					// `isApplicationScoped: false` is explicit.
+					await channel.call('install', [URI.parse(entry.vsix), {
+						installGivenVersion: true,
+						pinned: true,
+						isApplicationScoped: false,
+						isMachineScoped: true,
+						profileLocation: profile.extensionsResource,
+					}]);
+					this.logService.info(`[CodexConductor] Backfilled "${entry.id}" v${entry.version} from VSIX ${entry.vsix}`);
+				} catch (err) {
+					this.logService.error(`[CodexConductor] Failed to backfill "${entry.id}" from VSIX ${entry.vsix}`, err);
+					throw err;
+				}
+			}
 		}
 	}
 }

@@ -160,6 +160,8 @@ Some Codex patches modify files that earlier patches also touch. When this happe
 |-------|-----------|
 | `feat-cli-pinning.patch` | `binary-name.patch` (both modify `nativeHostMainService.ts`) |
 | `feat-codex-sideloader.patch` | `feat-codex-conductor.patch` (both add imports to `workbench.common.main.ts`) |
+| `fix-conductor-extension-read.patch` | `disable-signature-verification.patch` (both modify `extensionManagementService.ts`; the prerequisite shifts the file by -1 line, so the conductor patch must be generated against the post-prerequisite tree) |
+| `fix-extension-scope-inheritance.patch` | `disable-signature-verification.patch`, `fix-conductor-extension-read.patch` (all three modify `extensionManagementService.ts`; regenerate with both prerequisites listed first) |
 
 If a patch fails to apply with "patch does not apply", check whether a prerequisite patch changed the same file. Regenerate using `dev/patch.sh` with the prerequisite listed first.
 

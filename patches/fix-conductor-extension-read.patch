@@ -1,0 +1,13 @@
+diff --git a/src/vs/platform/extensionManagement/node/extensionManagementService.ts b/src/vs/platform/extensionManagement/node/extensionManagementService.ts
+index cdf0c67..73897eb 100644
+--- a/src/vs/platform/extensionManagement/node/extensionManagementService.ts
++++ b/src/vs/platform/extensionManagement/node/extensionManagementService.ts
+@@ -864,7 +863,7 @@ export class ExtensionsScanner extends Disposable {
+ 	async scanLocalExtension(location: URI, type: ExtensionType, profileLocation?: URI): Promise<ILocalExtension> {
+ 		try {
+ 			if (profileLocation) {
+-				const scannedExtensions = await this.extensionsScannerService.scanUserExtensions({ profileLocation });
++				const scannedExtensions = await this.extensionsScannerService.scanUserExtensions({ profileLocation, includeInvalid: true });
+ 				const scannedExtension = scannedExtensions.find(e => this.uriIdentityService.extUri.isEqual(e.location, location));
+ 				if (scannedExtension) {
+ 					return await this.toLocalExtension(scannedExtension);
