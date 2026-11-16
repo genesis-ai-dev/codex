@@ -179,7 +179,7 @@ Enforces project-scoped extension version pins. Reads `pinnedExtensions` from pr
 - **Authoritative Reload:** Uses a patched `reload({ forceProfile: name })` IPC command to ensure the Main process opens the new window in the correct profile, bypassing persistence race conditions and dev-mode restrictions.
 - **Initialization Yielding:** Works in tandem with `codex-editor` which returns early from `activate()` if a mismatch is detected, showing a "pins applying" message on the splash screen.
 - **Duplicate Prevention:** Explicitly calls `resetWorkspaces()` before associating a profile to ensure lookup consistency.
-- **Loop Guard:** Includes a 3-cycle circuit breaker to prevent infinite reload loops if enforcement fails.
+- **Loop Guard:** Persists preparing/switching/blocked recovery state; an interrupted transition needs explicit retry instead of repeated automatic reloads.
 - **Lifecycle Management:** Automatic cleanup of orphaned profiles every 14 days.
 
 ### CodexSideloader (Workbench Contribution)
@@ -248,3 +248,11 @@ The Codex release version appends a time-based patch number: `{tag}.{day*24+hour
 For small gaps: `git merge origin/master`, resolve conflicts.
 For large gaps: cherry-pick patch updates from upstream, re-apply Codex customizations.
 After merging: `./dev/update_patches.sh` then `./dev/build.sh` to validate.
+
+### Coordinated pin recovery
+
+See `docs/project-pin-recovery.md` for the cross-repository contract and QA matrix.
+`zzzz-project-pin-policy.patch` runs after `zzz-authoritative-reload.patch` and overrides
+conductor profiles during native open/reload when the release policy is `ignore`.
+`zzzz-project-pin-arbitration.patch` registers the shared-process policy channel used by
+the conductor overlay. Both patches and the platform/conductor overlays must ship together.

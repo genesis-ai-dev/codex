@@ -599,6 +599,7 @@
       "default": false
     }
   },
+  "codexProjectPinPolicy": "ignore",
   "codexSideloadExtensions": [
     "project-accelerate.codex-editor-extension",
     "project-accelerate.shared-state-store",

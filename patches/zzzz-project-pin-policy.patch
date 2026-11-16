@@ -1,0 +1,31 @@
+diff --git a/src/vs/platform/windows/electron-main/windowImpl.ts b/src/vs/platform/windows/electron-main/windowImpl.ts
+index 3511ecd..608b7f6 100644
+--- a/src/vs/platform/windows/electron-main/windowImpl.ts
++++ b/src/vs/platform/windows/electron-main/windowImpl.ts
+@@ -1283,6 +1283,9 @@ export class CodeWindow extends BaseWindow implements ICodeWindow {
+ 		}
+ 
+ 		profile = profile || this.profile || this.userDataProfilesService.defaultProfile;
++		if ((this.productService as unknown as Record<string, unknown>)['codexProjectPinPolicy'] === 'ignore' && profile.icon === 'repo-pinned') {
++			profile = this.userDataProfilesService.defaultProfile;
++		}
+ 
+ 		configuration.profiles = {
+ 			all: this.userDataProfilesService.profiles,
+diff --git a/src/vs/platform/windows/electron-main/windowsMainService.ts b/src/vs/platform/windows/electron-main/windowsMainService.ts
+index 68a9c06..9bb4c12 100644
+--- a/src/vs/platform/windows/electron-main/windowsMainService.ts
++++ b/src/vs/platform/windows/electron-main/windowsMainService.ts
+@@ -1666,7 +1666,11 @@ export class WindowsMainService extends Disposable implements IWindowsMainServic
+ 
+ 		const workspace = configuration.workspace ?? toWorkspaceIdentifier(configuration.backupPath, false);
+ 		const profilePromise = this.resolveProfileForBrowserWindow(options, workspace, defaultProfile);
+-		const profile = profilePromise instanceof Promise ? await profilePromise : profilePromise;
++		let profile = profilePromise instanceof Promise ? await profilePromise : profilePromise;
++		// Resolve conductor associations before loading any project extension host.
++		if ((product as unknown as Record<string, unknown>)['codexProjectPinPolicy'] === 'ignore' && profile.icon === 'repo-pinned') {
++			profile = this.userDataProfilesMainService.defaultProfile;
++		}
+ 		configuration.profiles.profile = profile;
+ 
+ 		// Associate the configured profile to the workspace.
