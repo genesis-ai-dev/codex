@@ -1,0 +1,22 @@
+diff --git a/src/vs/code/electron-utility/sharedProcess/sharedProcessMain.ts b/src/vs/code/electron-utility/sharedProcess/sharedProcessMain.ts
+index 89d9736..6e27b7a 100644
+--- a/src/vs/code/electron-utility/sharedProcess/sharedProcessMain.ts
++++ b/src/vs/code/electron-utility/sharedProcess/sharedProcessMain.ts
+@@ -3,6 +3,7 @@
+  *  Licensed under the MIT License. See License.txt in the project root for license information.
+  *--------------------------------------------------------------------------------------------*/
+ 
++import { PinPolicyChannel } from '../../../platform/codexPinPolicy/node/pinPolicyChannel.js';
+ import { hostname, release } from 'os';
+ import { MessagePortMain, MessageEvent } from '../../../base/parts/sandbox/node/electronTypes.js';
+ import { toErrorMessage } from '../../../base/common/errorMessage.js';
+@@ -402,6 +403,9 @@ class SharedProcessMain extends Disposable implements IClientConnectionFilter {
+ 		// Extensions Management
+ 		const channel = new ExtensionManagementChannel(accessor.get(IExtensionManagementService), () => null);
+ 		this.server.registerChannel('extensions', channel);
++		const pinPolicyChannel = new PinPolicyChannel();
++		this.server.registerChannel('codexPinPolicy', pinPolicyChannel);
++		this._register(this.server.onDidRemoveConnection(connection => pinPolicyChannel.disconnect(connection.ctx)));
+ 
+ 		// Mcp Management
+ 		const mcpManagementChannel = new McpManagementChannel(accessor.get(IMcpManagementService), () => null);

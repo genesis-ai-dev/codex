@@ -3,6 +3,7 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
+import type { PinDecisions } from "../../../../platform/codexPinPolicy/common/pinDecisions.js";
 export interface PinnedExtensionEntry {
 	version: string;
 	url: string;
@@ -16,7 +17,7 @@ export interface RequiredExtensions {
 
 export interface ProjectMetadata {
 	meta?: {
-		pinnedExtensions?: PinnedExtensions;
+		pinnedExtensions?: PinDecisions;
 		requiredExtensions?: RequiredExtensions;
 	};
 	[key: string]: unknown;
@@ -36,7 +37,8 @@ export function parsePinnedExtensions(value: unknown): PinnedExtensions | undefi
 		if (
 			entry && typeof entry === 'object' &&
 			typeof (entry as Record<string, unknown>).version === 'string' &&
-			typeof (entry as Record<string, unknown>).url === 'string'
+			typeof (entry as Record<string, unknown>).url === 'string' &&
+            !!(entry as Record<string, unknown>).version && !!(entry as Record<string, unknown>).url
 		) {
 			result[key] = entry as PinnedExtensionEntry;
 		}

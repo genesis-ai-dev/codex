@@ -3,6 +3,12 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
+import { activePins, mergePinDecisions } from "../../../../platform/codexPinPolicy/common/pinDecisions.js";
+import type { PinDecisions } from "../../../../platform/codexPinPolicy/common/pinDecisions.js";
+import { IChannel } from '../../../../base/parts/ipc/common/ipc.js';
+import { PinPolicyState, PinRecoveryState, RemotePinSnapshot, validatePinMap } from '../common/pinPolicy.js';
+import { ITextFileService } from '../../../services/textfile/common/textfiles.js';
+import { IExtensionService } from '../../../services/extensions/common/extensions.js';
 import { Disposable, DisposableStore } from '../../../../base/common/lifecycle.js';
 import { IWorkbenchContribution } from '../../../common/contributions.js';
 import { IFileService } from '../../../../platform/files/common/files.js';
@@ -12,7 +18,7 @@ import { IUserDataProfile, IUserDataProfilesService } from '../../../../platform
 import { IWorkbenchExtensionManagementService } from '../../../services/extensionManagement/common/extensionManagement.js';
 import { IExtensionGalleryService } from '../../../../platform/extensionManagement/common/extensionManagement.js';
 import { IStorageService, StorageScope, StorageTarget } from '../../../../platform/storage/common/storage.js';
-import { INotificationService, Severity } from '../../../../platform/notification/common/notification.js';
+import { INotificationService } from '../../../../platform/notification/common/notification.js';
 import { URI } from '../../../../base/common/uri.js';
 import { VSBuffer } from '../../../../base/common/buffer.js';
 import { parse as parseJsonc } from '../../../../base/common/json.js';
@@ -23,10 +29,7 @@ import { IHostService } from '../../../services/host/browser/host.js';
 import { CommandsRegistry } from '../../../../platform/commands/common/commands.js';
 import { ISharedProcessService } from '../../../../platform/ipc/electron-browser/services.js';
 import { ILogService } from '../../../../platform/log/common/log.js';
-import { IDialogService } from '../../../../platform/dialogs/common/dialogs.js';
-import { IClipboardService } from '../../../../platform/clipboard/common/clipboardService.js';
 import { IProductService } from '../../../../platform/product/common/productService.js';
-import { OS, OperatingSystem } from '../../../../base/common/platform.js';
 import { timeout } from '../../../../base/common/async.js';
 import { CancellationToken } from '../../../../base/common/cancellation.js';
 import { PinnedExtensions, RequiredExtensions, ProjectMetadata, parsePinnedExtensions, SideloadEntry, SideloadVsixEntry, parseSideloadEntries } from './codexTypes.js';
@@ -34,9 +37,6 @@ import { PinnedExtensions, RequiredExtensions, ProjectMetadata, parsePinnedExten
 /** Maps profile name → array of project folder URIs that reference it. */
 type ProfileAssociations = Record<string, string[]>;
 
-const CIRCUIT_BREAKER_KEY = 'codex.conductor.enforcementAttempts';
-const CIRCUIT_BREAKER_MAX = 3;
-const CIRCUIT_BREAKER_WINDOW_MS = 30_000;
 const CONDUCTOR_PROFILE_ICON = 'repo-pinned';
 const PROFILE_ASSOCIATIONS_KEY = 'codex.conductor.profileAssociations';
 const LAST_CLEANUP_KEY = 'codex.conductor.lastCleanup';
@@ -57,7 +57,20 @@ export class CodexConductorContribution extends Disposable implements IWorkbench
 	static readonly ID = 'workbench.contrib.codexConductor';
 
 	private metadataUri: URI | undefined;
-	private lastSeenPinsSnapshot: string | undefined;
+	private policy!: PinPolicyState;
+	private readonly arbiter: IChannel;
+	private arbitrationEpoch = 0;
+	private activeRecoveryGeneration: number | undefined;
+	private remoteCheck: { request: number; origin: string; branch: string } | undefined;
+	private finishDiscovery!: () => void;
+	private discoveryFinished = false;
+	private discoveryError: string | undefined;
+	private readonly discovery = new Promise<void>(resolve => { this.finishDiscovery = resolve; });
+	private recovery: Promise<void> = Promise.resolve();
+	private readonly recoveryKey = 'codex.conductor.pinRecovery.v1';
+	private readonly ignorePins: boolean;
+	private readonly policySession = `${Date.now()}-${Math.random()}`;
+
 	private readonly syncCompletionListener = this._register(new DisposableStore());
 
 	constructor(
@@ -72,29 +85,118 @@ export class CodexConductorContribution extends Disposable implements IWorkbench
 		@IHostService private readonly hostService: IHostService,
 		@ILogService private readonly logService: ILogService,
 		@ISharedProcessService private readonly sharedProcessService: ISharedProcessService,
-		@IDialogService private readonly dialogService: IDialogService,
-		@IClipboardService private readonly clipboardService: IClipboardService,
 		@IProductService private readonly productService: IProductService,
+		@IExtensionService private readonly extensionService: IExtensionService,
+		@ITextFileService private readonly textFileService: ITextFileService,
 	) {
 		super();
-
-		this._register(CommandsRegistry.registerCommand('codex.conductor.cleanupProfiles', () => this.runProfileCleanup()));
-		this._register(CommandsRegistry.registerCommand('codex.conductor.getEffectivePinnedExtensions', () => this.readEffectivePinsInternal()));
-		
-		this._register(CommandsRegistry.registerCommand('codex.conductor.setAdminPinIntent', (_accessor, pins: PinnedExtensions) => {
-			this.storageService.store(ADMIN_PINNED_EXTENSIONS_KEY, JSON.stringify(pins), StorageScope.WORKSPACE, StorageTarget.MACHINE);
+		this.ignorePins = (this.productService as unknown as Record<string, unknown>)['codexProjectPinPolicy'] === 'ignore';
+		this.loadPolicy();
+		this.arbiter = this.sharedProcessService.getChannel('codexPinPolicy');
+		this._register(this.arbiter.listen<{ workspace: string; snapshot?: RemotePinSnapshot; intent?: PinDecisions | null; source?: { origin: string; branch: string }; invalidate: boolean }>('changed')(event => this.onPinPolicyEvent(event)));
+		if (this.ignorePins) {
+			this.storageService.remove(REMOTE_PINNED_EXTENSIONS_KEY, StorageScope.WORKSPACE);
+			this.storageService.remove(ADMIN_PINNED_EXTENSIONS_KEY, StorageScope.WORKSPACE);
+		}
+		this._register(CommandsRegistry.registerCommand('codex.conductor.getPinPolicyStatus', () => this.policyStatus()));
+		this._register(CommandsRegistry.registerCommand('codex.conductor.completePinDiscovery', async (_accessor, result: { kind: string; reason?: string }) => {
+			this.discoveryError = result.kind === 'invalid' ? result.reason || 'Invalid remote pin policy' : undefined;
+			this.discoveryFinished = true;
+			this.finishDiscovery();
+			// A late result must resume recovery, not leave a timeout or startup-order block behind.
+			if (!this.discoveryError && this.policy.state.phase === 'blocked' && this.policy.state.error?.startsWith('Discovery:')) { this.policy.retry(); }
+			await this.queueRecovery();
+		}));
+		this._register(CommandsRegistry.registerCommand('codex.conductor.writeProjectPins', async (_accessor, input: { generation: number }) => {
+			const policy = this.policy;
+			if (input.generation !== policy.state.generation) { throw new Error('Pin decision superseded'); }
+			if (!this.metadataUri || !policy.state.remote) { throw new Error('No accepted project snapshot'); }
+			if (this.textFileService.isDirty(this.metadataUri)) { throw new Error('Save metadata.json before applying project pins'); }
+			const snapshot = policy.state.remote;
+			// The shared process serializes acceptance and the complete read/modify/write,
+			// so renderer disconnects and delayed extension-host writes cannot restore old pins.
+			await this.arbiter.call('writePins', {
+				workspace: this.workspaceContextService.getWorkspace().id,
+				filePath: this.metadataUri.fsPath,
+				snapshot,
+				pins: this.ignorePins ? {} : policy.state.remote.pins,
+				ignorePins: this.ignorePins
+			});
+			if (input.generation !== policy.state.generation || policy.state.remote !== snapshot) { return; }
+			this.discoveryError = undefined;
+			if (this.policy.state.error?.startsWith('Discovery:')) { this.policy.retry(); this.persistPolicy(); }
+		}));
+		this._register(CommandsRegistry.registerCommand('codex.conductor.stageProjectPinSnapshot', async (_accessor, input: { workspace: string; snapshot: RemotePinSnapshot }) => {
+			const workspace = URI.parse(input.workspace);
+			if (workspace.scheme !== 'file') { throw new Error('Only local project snapshots can be staged'); }
+			const validation = new PinPolicyState('enforce');
+			const ticket = validation.beginRemote(input.snapshot.origin, input.snapshot.branch);
+			validation.acceptRemote(ticket, { ...input.snapshot, pins: this.ignorePins ? {} : input.snapshot.pins });
+			this.storageService.store(`codex.conductor.stagedPins:${workspace.toString()}`, JSON.stringify(validation.state.remote), StorageScope.APPLICATION, StorageTarget.MACHINE);
+			await this.storageService.flush();
+		}));
+		this._register(CommandsRegistry.registerCommand('codex.conductor.reconcilePinPolicy', () => this.queueRecovery().then(() => this.policyStatus())));
+		this._register(CommandsRegistry.registerCommand('codex.conductor.retryPinRecovery', async () => {
+			if (this.discoveryError) { this.policy.retry(); this.persistPolicy(); await this.storageService.flush(); await this.hostService.reload(); return this.policyStatus(); }
+			await this.arbiter.call('retry', { workspace: this.workspaceContextService.getWorkspace().id });
+			this.policy.retry();
+			await this.queueRecovery();
+			if (this.policy.state.phase === 'ready') {
+				this.policy.switching(this.policy.state.generation, this.userDataProfileService.currentProfile.name);
+				this.persistPolicy();
+				await this.hostService.reload(); // Resume extensions whose earlier activation was paused.
+			}
+			return this.policyStatus();
+		}));
+		this._register(CommandsRegistry.registerCommand('codex.conductor.beginRemotePinCheck', async (_accessor, source: { origin: string; branch: string }) => {
+			this.policy.beginRemote(source.origin, source.branch);
+			const request = await this.arbiter.call<number>('begin', { workspace: this.workspaceContextService.getWorkspace().id, source });
+			if (this.policy.state.localIntent && this.metadataUri) {
+				await this.arbiter.call('setIntent', { workspace: this.workspaceContextService.getWorkspace().id, source, filePath: this.metadataUri.fsPath, pins: this.policy.state.localIntent, restoreIntent: true });
+			}
+			if (!this.remoteCheck || request > this.remoteCheck.request) { this.remoteCheck = { ...source, request }; }
+			return { session: this.policySession, request };
+		}));
+		this._register(CommandsRegistry.registerCommand('codex.conductor.acceptRemotePinSnapshot', async (_accessor, input: { session: string; request: number; snapshot: RemotePinSnapshot }) => {
+			if (input.session !== this.policySession || input.request !== this.remoteCheck?.request
+				|| input.snapshot.origin !== this.remoteCheck.origin || input.snapshot.branch !== this.remoteCheck.branch) { return { accepted: false, ...this.policyStatus() }; }
+			const snapshot = { ...input.snapshot, pins: this.ignorePins ? {} : validatePinMap(input.snapshot.pins) };
+			if (!snapshot.origin || !snapshot.branch || !/^[a-f0-9]{40,64}$/i.test(snapshot.commit)) { throw new Error('Invalid remote snapshot'); }
+			if (!await this.arbiter.call<boolean>('accept', { workspace: this.workspaceContextService.getWorkspace().id, request: input.request, snapshot })) { return { accepted: false, ...this.policyStatus() }; }
+			// Ordered shared-process events own the local mirror. Do not replay an older
+			// acknowledgement over a newer event delivered while this request awaited IPC.
+			if (input.request !== this.remoteCheck?.request || JSON.stringify(this.policy.state.remote) !== JSON.stringify(snapshot)) {
+				return { accepted: false, ...this.policyStatus() };
+			}
+			// Caller persists metadata before requesting reconciliation; no reload inside acceptance.
+			return { accepted: true, ...this.policyStatus() };
 		}));
 
-		this._register(CommandsRegistry.registerCommand('codex.conductor.clearAdminPinIntent', () => {
+		this._register(CommandsRegistry.registerCommand('codex.conductor.cleanupProfiles', () => this.runProfileCleanup()));
+		this._register(CommandsRegistry.registerCommand('codex.conductor.getEffectivePinnedExtensions', () => this.readEffectivePinsInternal().then(activePins)));
+
+		this._register(CommandsRegistry.registerCommand('codex.conductor.setAdminPinIntent', async (_accessor, pins: PinDecisions, edits?: Record<string, { version: string; url: string } | null>) => {
+			if (this.ignorePins) { return; }
+			if (!this.metadataUri) { throw new Error('No project metadata'); }
+			if (this.textFileService.isDirty(this.metadataUri)) { throw new Error('Save metadata.json before editing project pins'); }
+			const intent = validatePinMap(pins);
+			await this.arbiter.call('setIntent', { workspace: this.workspaceContextService.getWorkspace().id, source: this.policy.state.source, filePath: this.metadataUri.fsPath, pins: intent, edits });
+			this.persistPolicy();
+			this.storageService.store(ADMIN_PINNED_EXTENSIONS_KEY, JSON.stringify(this.policy.state.localIntent ?? {}), StorageScope.WORKSPACE, StorageTarget.MACHINE);
+		}));
+		this._register(CommandsRegistry.registerCommand('codex.conductor.clearAdminPinIntent', async () => {
+			if (this.policy.state.localIntent && JSON.stringify(mergePinDecisions(this.policy.state.localIntent, this.policy.state.remote?.pins ?? {})) !== JSON.stringify(this.policy.state.remote?.pins ?? {})) { return; }
+			if (!await this.arbiter.call<boolean>('clearIntent', { workspace: this.workspaceContextService.getWorkspace().id })) { return; }
+			this.persistPolicy();
 			this.storageService.remove(ADMIN_PINNED_EXTENSIONS_KEY, StorageScope.WORKSPACE);
 		}));
 
 		this._register(CommandsRegistry.registerCommand('codex.conductor.hasAdminPinIntent', () => {
-			const raw = this.storageService.get(ADMIN_PINNED_EXTENSIONS_KEY, StorageScope.WORKSPACE);
-			return !!raw;
+			return !!this.policy.state.localIntent;
 		}));
 
 		this._register(CommandsRegistry.registerCommand('codex.conductor.setRemotePins', (_accessor, pins: PinnedExtensions | null | undefined) => {
+			if (this.ignorePins || this.policy.state.remote) { return; }
 			if (pins && Object.keys(pins).length > 0) {
 				this.storageService.store(REMOTE_PINNED_EXTENSIONS_KEY, JSON.stringify(pins), StorageScope.WORKSPACE, StorageTarget.MACHINE);
 			} else {
@@ -103,9 +205,9 @@ export class CodexConductorContribution extends Disposable implements IWorkbench
 		}));
 
 		this._register(CommandsRegistry.registerCommand('codex.conductor.getPinMismatches', async () => {
-			const pins = await this.readEffectivePinsInternal();
+			const pins = activePins(await this.readEffectivePinsInternal());
 			if (!pins) { return []; }
-			
+
 			const installed = await this.extensionManagementService.getInstalled();
 			const mismatches: { extensionId: string; pinnedVersion: string; runningVersion: string | null }[] = [];
 			for (const [id, pin] of Object.entries(pins)) {
@@ -121,10 +223,26 @@ export class CodexConductorContribution extends Disposable implements IWorkbench
 			this.storageService.store(SYNC_COMPLETED_AT_KEY, timestamp, StorageScope.WORKSPACE, StorageTarget.MACHINE);
 		}));
 
-		this._register(this.workspaceContextService.onDidChangeWorkbenchState(() => this.initialize()));
+		this._register(this.workspaceContextService.onDidChangeWorkbenchState(() => void this.initialize()));
 
-		this.initialize();
+		void this.initialize();
 	}
+
+	private onPinPolicyEvent(event: { workspace: string; snapshot?: RemotePinSnapshot; intent?: PinDecisions | null; source?: { origin: string; branch: string }; invalidate: boolean }): void {
+		if (event.workspace !== this.workspaceContextService.getWorkspace().id) { return; }
+		if (event.invalidate) {
+			this.arbitrationEpoch++;
+			if (this.policy.state.phase === 'preparing' && this.activeRecoveryGeneration === this.policy.state.generation) { this.policy.retry(); }
+		}
+		if (event.intent !== undefined) { this.policy.state.localIntent = event.intent ?? undefined; this.policy.select(this.policy.state.pins); this.persistPolicy(); }
+		if (event.source) { this.policy.beginRemote(event.source.origin, event.source.branch); }
+		if (event.snapshot) {
+			this.policy.acceptRemote(this.policy.beginRemote(event.snapshot.origin, event.snapshot.branch), event.snapshot);
+			this.policy.select(this.policy.state.pins);
+			this.persistPolicy();
+		}
+	}
+
 
 	private getCoreExtensionEntries(): SideloadEntry[] {
 		const configured = (this.productService as unknown as Record<string, unknown>)['codexSideloadExtensions'];
@@ -134,188 +252,179 @@ export class CodexConductorContribution extends Disposable implements IWorkbench
 		return parseSideloadEntries(configured);
 	}
 
+	private loadPolicy(): void {
+		try {
+			const saved = JSON.parse(this.storageService.get(this.recoveryKey, StorageScope.WORKSPACE, 'null')) as PinRecoveryState | undefined;
+			this.policy = new PinPolicyState(this.ignorePins ? 'ignore' : 'enforce', saved || undefined);
+		} catch {
+			this.policy = new PinPolicyState(this.ignorePins ? 'ignore' : 'enforce');
+		}
+	}
+
+	private persistPolicy(): void {
+		this.storageService.store(this.recoveryKey, JSON.stringify(this.policy.state), StorageScope.WORKSPACE, StorageTarget.MACHINE);
+	}
+
+	private policyStatus() {
+		return { protocolVersion: 1, ...this.policy.state, pendingIntent: !!this.policy.state.localIntent, workspace: this.workspaceContextService.getWorkspace().folders[0]?.uri.toString() };
+	}
+
 	private async initialize(): Promise<void> {
-		if (this.workspaceContextService.getWorkbenchState() !== WorkbenchState.FOLDER) {
-			this.metadataUri = undefined;
-			await this.revertIfPatchBuild();
-			return;
+		this.metadataUri = this.workspaceContextService.getWorkbenchState() === WorkbenchState.FOLDER
+			? joinPath(this.workspaceContextService.getWorkspace().folders[0].uri, 'metadata.json') : undefined;
+		const workspace = this.workspaceContextService.getWorkspace().folders[0]?.uri;
+		if (workspace) {
+			const key = `codex.conductor.stagedPins:${workspace.toString()}`;
+			const staged = this.storageService.get(key, StorageScope.APPLICATION);
+			if (staged) {
+				try {
+					const snapshot = JSON.parse(staged) as RemotePinSnapshot;
+					// Project Update intentionally replaces local policy, including unpublished intent.
+					this.policy.state.localIntent = undefined;
+					this.storageService.remove(ADMIN_PINNED_EXTENSIONS_KEY, StorageScope.WORKSPACE);
+					await this.arbiter.call('resetIntent', { workspace: this.workspaceContextService.getWorkspace().id, snapshot });
+					this.policy.acceptRemote(this.policy.beginRemote(snapshot.origin, snapshot.branch), snapshot);
+					this.policy.select(this.policy.state.pins);
+					this.persistPolicy();
+					this.storageService.remove(key, StorageScope.APPLICATION);
+				} catch (error) {
+					this.policy.block(this.policy.state.generation, `Invalid staged project snapshot: ${String(error)}`);
+				}
+			}
 		}
-
-		const workspaceFolder = this.workspaceContextService.getWorkspace().folders[0];
-		this.metadataUri = joinPath(workspaceFolder.uri, 'metadata.json');
-
-		// Snapshot current pins before enforcement
-		this.lastSeenPinsSnapshot = await this.readPinsSnapshot();
-
-		// Backfill: if we're already sitting on a conductor profile (no reload
-		// needed this session), make sure its settings still disable update
-		// checks. Handles users whose profiles were created before this change.
-		const currentProfile = this.userDataProfileService.currentProfile;
-		if (currentProfile.icon === CONDUCTOR_PROFILE_ICON) {
-			await this.seedProfileSettings(currentProfile);
-		}
-
-		// Run initial enforcement
-		await this.enforce();
-
-		// Periodic profile cleanup (every 14 days)
-		await this.maybeCleanupOrphanedProfiles();
-
-		// Listen for sync completions from Frontier
-		this.listenForSyncCompletion();
-
+		this.syncCompletionListener.clear();
+		this.syncCompletionListener.add(this.storageService.onDidChangeValue(StorageScope.WORKSPACE, undefined, this.syncCompletionListener)(event => {
+			if ([REMOTE_PINNED_EXTENSIONS_KEY, ADMIN_PINNED_EXTENSIONS_KEY, SYNC_COMPLETED_AT_KEY].includes(event.key)) {
+				void this.queueRecovery();
+			}
+		}));
+		await this.queueRecovery();
+		if (this.policy.state.phase === 'ready') { await this.maybeCleanupOrphanedProfiles(); }
 		await this.logStartupExtensionState();
 	}
 
-	// ── Mid-session signals ────────────────────────────────────────────
+	private async awaitDiscovery(): Promise<void> {
+		if (this.ignorePins || !this.metadataUri || !await this.fileService.exists(this.metadataUri)) { return; }
+		if (this.discoveryError) { throw new Error(this.discoveryError); }
+		if (this.discoveryFinished) { return; }
+		await Promise.race([this.discovery, timeout(20000)]);
+		if (this.discoveryError) { throw new Error(this.discoveryError); }
+		if (!this.discoveryFinished) {
+			this.logService.warn('[CodexConductor] Discovery unavailable; using accepted/local pins until Frontier is ready');
+			this.discoveryFinished = true;
+		}
+	}
 
-	/**
-	 * Listens for Frontier's workspace state changes via IStorageService.
-	 * When Frontier writes to its workspaceState (e.g. after a sync), this fires.
-	 * We then check if pinnedExtensions in metadata.json have changed and prompt
-	 * the user to reload if so.
-	 */
-	private listenForSyncCompletion(): void {
-		this.syncCompletionListener.clear();
-
-		const storageListener = this.storageService.onDidChangeValue(
-			StorageScope.WORKSPACE,
-			undefined, // listen to all keys in this scope
-			this.syncCompletionListener
-		)((e) => {
-			if (e.key === REMOTE_PINNED_EXTENSIONS_KEY || e.key === SYNC_COMPLETED_AT_KEY || e.key === ADMIN_PINNED_EXTENSIONS_KEY) {
-				this.checkForPinChanges();
-			}
+	private queueRecovery(): Promise<void> {
+		// Refresh the decision immediately, even while an older installation is awaiting I/O.
+		const selection = this.awaitDiscovery().then(() => this.readEffectivePinsInternal()).then(pins => {
+			this.policy.select(pins || {});
+			this.persistPolicy();
 		});
-
-		this.syncCompletionListener.add(storageListener);
+		// Selection can fail while a previous recovery is still awaiting package I/O.
+		void selection.catch(() => {});
+		this.recovery = this.recovery.catch(() => {}).then(async () => {
+			await selection;
+			const workspace = this.workspaceContextService.getWorkspace().id;
+			if (this.policy.state.error?.startsWith('Coordination:')) { this.policy.retry(); }
+			const lease = await this.arbiter.call<number | undefined>('acquire', { workspace, owner: this.policySession });
+			if (lease === undefined) {
+				this.policy.block(this.policy.state.generation, 'Coordination: Another window is recovering this project. Wait for it to finish, then retry recovery.');
+				this.persistPolicy();
+				return;
+			}
+			this.activeRecoveryGeneration = this.policy.state.generation;
+			try { await this.reconcilePolicy(lease); }
+			finally { this.activeRecoveryGeneration = undefined; await this.arbiter.call('release', { workspace, owner: this.policySession }); }
+		}).catch(error => {
+			this.policy.block(this.policy.state.generation, this.discoveryError ? `Discovery: ${String(error)}` : String(error));
+			this.persistPolicy();
+			this.logService.error('[CodexConductor] Pin recovery blocked', error);
+		});
+		return this.recovery;
 	}
 
-	private async checkForPinChanges(): Promise<void> {
-		const currentSnapshot = await this.readPinsSnapshot();
-		if (currentSnapshot === this.lastSeenPinsSnapshot) {
-			return;
-		}
-
-		this.lastSeenPinsSnapshot = currentSnapshot;
-
-		if (!currentSnapshot) {
-			// Pins were removed — prompt reload to revert to default profile.
-			// Use switchProfileAndReload() so the workspace-profile association
-			// is persisted (not just the immediate reload target).
-			const defaultProfile = this.userDataProfilesService.profiles.find(p => p.isDefault);
-			if (!defaultProfile) { return; }
-			this.notificationService.prompt(
-				Severity.Info,
-				'Extension version pins have been removed. Reload to revert to the default profile.',
-				[{
-					label: 'Reload Codex',
-					run: () => this.switchProfileAndReload(defaultProfile)
-				}]
-			);
-			return;
-		}
-
-		// New or changed pins — need to prepare the profile before reloading.
-		let pins: PinnedExtensions;
-		try {
-			const parsed = parsePinnedExtensions(JSON.parse(currentSnapshot));
-			if (!parsed) { return; }
-			pins = parsed;
-		} catch {
-			return;
-		}
-
-		const targetProfileName = this.resolveProfileName(pins);
-		const existingProfile = this.userDataProfilesService.profiles.find(p => p.name === targetProfileName);
-
-		if (existingProfile && await this.validateProfileExtensions(existingProfile, pins)) {
-			// Profile already exists and is complete — prompt reload via switchProfileAndReload()
-			// which persists the workspace-profile association before reloading.
-			this.notificationService.prompt(
-				Severity.Info,
-				'Pinned extension installed. Reload to apply.',
-				[{
-					label: 'Reload Codex',
-					run: () => this.switchProfileAndReload(existingProfile)
-				}]
-			);
-			return;
-		}
-
-		if (existingProfile) {
-			this.logService.warn(`[CodexConductor] Profile "${targetProfileName}" exists but is missing pinned extensions — repairing`);
-		}
-
-		// Profile doesn't exist or is incomplete — download and install, then prompt.
-		// Show progress notification with "Reload Codex When Ready" option.
-		let reloadWhenReady = false;
-
-		const handle = this.notificationService.prompt(
-			Severity.Info,
-			'Installing pinned extension\u2026',
-			[{
-				label: 'Reload Codex When Ready',
-				run: () => { reloadWhenReady = true; }
-			}]
-		);
-		handle.progress.infinite();
-
-		try {
-			// Reuse the existing incomplete profile or create a new one.
-			const profile = existingProfile
-				?? await this.userDataProfilesService.createNamedProfile(targetProfileName, { icon: CONDUCTOR_PROFILE_ICON });
-
-			try {
-				await this.installPinnedExtensions(pins, profile);
-				await this.backfillCoreExtensions(profile, new Set(Object.keys(pins).map(id => id.toLowerCase())));
-			} catch (e: unknown) {
-				// Installation failed after all retries — cleanup the incomplete profile
-				// (only if it's not the current profile, which cannot be deleted).
-				if (profile.id !== this.userDataProfileService.currentProfile.id) {
-					try {
-						await this.userDataProfilesService.removeProfile(profile);
-						this.logService.info(`[CodexConductor] Cleaned up incomplete profile "${targetProfileName}" after installation failure`);
-					} catch (cleanupError) {
-						this.logService.warn(`[CodexConductor] Failed to clean up incomplete profile "${targetProfileName}": ${cleanupError}`);
-					}
-				}
-				throw e;
+	private async reconcilePolicy(lease?: number): Promise<void> {
+		const policy = this.policy;
+		const generation = policy.state.generation;
+		const epoch = this.arbitrationEpoch;
+		const current = () => this.policy === policy && policy.current(generation) && epoch === this.arbitrationEpoch;
+		const pins = activePins(policy.state.pins);
+		const hasPins = Object.keys(pins).length > 0;
+		if (policy.state.remote) {
+			const saved = await this.arbiter.call<boolean>('isSaved', { workspace: this.workspaceContextService.getWorkspace().id, snapshot: policy.state.remote });
+			if (!current()) { return; }
+			if (!saved) {
+				policy.block(generation, 'Discovery: Accepted pins must be saved before profile recovery');
+				this.persistPolicy();
+				return;
 			}
-
-			handle.close();
-
-			// forceReload: we just installed/backfilled into `profile`. If the
-			// user happens to already be on it, the default skip-when-IDs-match
-			// path would leave the new extensions inactive until manual reload.
-			if (reloadWhenReady) {
-				// User already opted in — reload immediately
-				await this.switchProfileAndReload(profile, true);
-			} else {
-				// Show completion notification with reload button
-				this.notificationService.prompt(
-					Severity.Info,
-					'Pinned extension installed. Reload to apply.',
-					[{
-						label: 'Reload Codex',
-						run: () => this.switchProfileAndReload(profile, true)
-					}]
-				);
+			if (!this.discoveryError && policy.state.error?.startsWith('Discovery:')) {
+				policy.state.phase = 'resolving';
+				policy.state.error = undefined;
 			}
-		} catch (e: unknown) {
-			handle.close();
-			this.notificationService.prompt(
-				Severity.Error,
-				'Failed to install pinned extension.',
-				[{
-					label: 'Copy Error Report',
-					run: () => this.showErrorReport(pins, e)
-				}]
-			);
+		}
+		const active = this.userDataProfileService.currentProfile;
+		const normal = active.icon === CONDUCTOR_PROFILE_ICON ? this.userDataProfilesService.defaultProfile : active;
+		const targetName = hasPins ? this.resolveProfileName(pins) : normal.name;
+		let target = hasPins ? this.userDataProfilesService.profiles.find(p => p.name === targetName) : normal;
+		const complete = target && await this.validateProfileExtensions(target, pins);
+		if (!current()) { return; }
+		await this.extensionService.whenInstalledExtensionsRegistered();
+		const selected = target ? await this.extensionManagementService.getInstalled(undefined, target.extensionsResource) : [];
+		if (!current()) { return; }
+		const runningCore = this.getCoreExtensionEntries().every(entry => {
+			const id = typeof entry === 'string' ? entry : entry.id;
+			const expected = selected.find(ext => ext.identifier.id.toLowerCase() === id.toLowerCase());
+			return !!expected && this.extensionService.extensions.some(ext => ext.identifier.value.toLowerCase() === id.toLowerCase() && ext.version === expected.manifest.version
+				&& (!this.ignorePins || !['project-accelerate.codex-editor-extension', 'frontier-rnd.frontier-authentication'].includes(id.toLowerCase())
+					|| (ext as unknown as { codexProjectPinPolicyVersion?: number }).codexProjectPinPolicyVersion === 2));
+		});
+		const runningMatches = runningCore && target?.id === this.userDataProfileService.currentProfile.id && complete
+			&& Object.entries(pins).every(([id, pin]) => this.extensionService.extensions.some(ext => ext.identifier.value.toLowerCase() === id.toLowerCase() && ext.version === pin.version));
+		if (runningMatches) {
+			if (!hasPins) { this.removeCurrentProjectFromAssociations(); }
+			policy.ready(generation);
+			this.persistPolicy();
+			return;
+		}
+		if (policy.state.phase === 'blocked') { return; }
+		// A previous host already attempted this exact transition. Never reload indefinitely.
+		if (policy.state.phase === 'switching' || policy.state.phase === 'preparing') {
+			policy.block(generation, 'Previous profile transition did not complete. Check extension packages, then run Retry Pin Recovery.');
+			this.persistPolicy();
+			return;
+		}
+		if (hasPins && this.metadataUri) { this.addProfileAssociation(targetName, this.workspaceContextService.getWorkspace().folders[0].uri.toString()); }
+		policy.preparing(generation, targetName);
+		this.persistPolicy();
+		try {
+			if (!target) { target = await this.userDataProfilesService.createNamedProfile(targetName, { icon: CONDUCTOR_PROFILE_ICON }); }
+			if (!current()) { return; }
+			if (!complete) {
+				await this.installPinnedExtensions(pins, target, current);
+				if (!current()) { return; }
+				await this.backfillCoreExtensions(target, new Set(Object.keys(pins).map(id => id.toLowerCase())), current);
+			}
+			if (!current()) { return; }
+			if (!await this.validateProfileExtensions(target, pins)) { throw new Error('Target profile is incomplete or lacks compatible Editor/Frontier packages. Install the coordinated builds and retry.'); }
+			if (!current()) { return; }
+			if (lease !== undefined && !await this.arbiter.call<boolean>('valid', { workspace: this.workspaceContextService.getWorkspace().id, owner: this.policySession, epoch: lease })) { return; }
+			if (!current()) { return; }
+			policy.switching(generation, target.name);
+			this.persistPolicy();
+			await this.storageService.flush();
+			if (!current()) { return; }
+			await this.switchProfileAndReload(target, true, current);
+		} catch (error) {
+			if (!current()) { return; }
+			policy.block(generation, String(error));
+			this.persistPolicy();
+			this.notificationService.warn(`Project extension recovery paused: ${String(error)}. Retry after packages or connectivity are available.`);
 		}
 	}
 
-	private async installPinnedExtensions(pins: PinnedExtensions, profile: IUserDataProfile): Promise<void> {
+	private async installPinnedExtensions(pins: PinnedExtensions, profile: IUserDataProfile, current: () => boolean = () => true): Promise<void> {
 		// Use the shared process 'extensions' IPC channel directly to bypass
 		// NativeExtensionManagementService.downloadVsix(), which downloads in the
 		// renderer using browser fetch() — that fails for GitHub release URLs due
@@ -327,6 +436,7 @@ export class CodexConductorContribution extends Disposable implements IWorkbench
 		const installed = await this.extensionManagementService.getInstalled(undefined, profile.extensionsResource);
 
 		for (const [id, pin] of Object.entries(pins)) {
+			if (!current()) { return; }
 			const existing = installed.find(e => e.identifier.id.toLowerCase() === id.toLowerCase());
 			if (existing && existing.manifest.version === pin.version) {
 				this.logService.info(`[CodexConductor] Pinned extension "${id}" v${pin.version} already installed in profile "${profile.name}" — skipping VSIX download`);
@@ -335,6 +445,7 @@ export class CodexConductorContribution extends Disposable implements IWorkbench
 
 			let lastError: Error | undefined;
 			for (let attempt = 1; attempt <= 3; attempt++) {
+				if (!current()) { return; }
 				try {
 					this.logService.info(`[CodexConductor] Installing pinned VSIX for "${id}" v${pin.version} from ${pin.url} (attempt ${attempt}/3)`);
 
@@ -378,23 +489,6 @@ export class CodexConductorContribution extends Disposable implements IWorkbench
 		}
 	}
 
-	/**
-	 * Returns a stable JSON snapshot of currently active pins from the prioritized
-	 * source (local metadata.json or remote storage).
-	 */
-	private async readPinsSnapshot(): Promise<string | undefined> {
-		const pins = await this.readEffectivePinsInternal();
-		if (!pins) { return undefined; }
-		// Canonicalize both top-level key order and nested entry field order
-		// so the snapshot is stable regardless of parse/write iteration order.
-		const sorted = Object.keys(pins).sort().reduce<PinnedExtensions>((acc, k) => {
-			const e = pins[k];
-			acc[k] = { url: e.url, version: e.version };
-			return acc;
-		}, {});
-		return JSON.stringify(sorted);
-	}
-
 	private async logStartupExtensionState(): Promise<void> {
 		const installed = await this.extensionManagementService.getInstalled();
 		const coreVersions = this.getCoreExtensionEntries().map(entry => {
@@ -423,7 +517,7 @@ export class CodexConductorContribution extends Disposable implements IWorkbench
 		try {
 			const content = await this.fileService.readFile(this.metadataUri);
 			try {
-				return JSON.parse(content.value.toString()) as ProjectMetadata;
+				return JSON.parse(content.value.toString().replace(/^\uFEFF/, '')) as ProjectMetadata;
 			} catch (parseError) {
 				this.logService.warn('[CodexConductor] metadata.json contains invalid JSON — extension pinning disabled');
 				return undefined;
@@ -435,57 +529,21 @@ export class CodexConductorContribution extends Disposable implements IWorkbench
 
 	/**
 	 * Reads the effective pinned extensions by considering:
-	 * 1. Admin Intent (adminPinnedExtensions in storage) - Absolute precedence.
-	 * 2. Remote Pins (remotePinnedExtensions in storage) - Authoritative for users.
-	 * 3. Local Pins (metadata.json on disk) - Fallback.
+	 * Release policy overrides pins. Source-bound remote and local decisions are
+	 * compared per extension; legacy remote caches are not authoritative.
 	 */
-	private async readEffectivePinsInternal(): Promise<PinnedExtensions | undefined> {
-		// 1. Check Admin Intent (highest precedence)
-		const rawAdmin = this.storageService.get(ADMIN_PINNED_EXTENSIONS_KEY, StorageScope.WORKSPACE);
-		if (rawAdmin) {
-			try {
-				const adminIntent = parsePinnedExtensions(JSON.parse(rawAdmin));
-				if (adminIntent) {
-					// We only honor the intent if it matches what's currently running.
-					// This prevents "intent leakage" if the admin manually changes
-					// extensions without using the conductor.
-					const installed = await this.extensionManagementService.getInstalled();
-					let matchesRunning = true;
-					for (const [id, pin] of Object.entries(adminIntent)) {
-						const ext = installed.find(e => e.identifier.id.toLowerCase() === id.toLowerCase());
-						if (!ext || ext.manifest.version !== pin.version) {
-							matchesRunning = false;
-							break;
-						}
-					}
-
-					if (matchesRunning) {
-						this.logService.trace('[CodexConductor] Admin intent active and matches running version — prioritizing.');
-						return adminIntent;
-					}
-				}
-			} catch {
-				this.logService.warn('[CodexConductor] Malformed admin intent in storage');
-			}
-		}
-
-		// 2. Check Remote Pins (authoritative for users)
-		const rawRemote = this.storageService.get(REMOTE_PINNED_EXTENSIONS_KEY, StorageScope.WORKSPACE);
-		if (rawRemote) {
-			try {
-				const remotePins = parsePinnedExtensions(JSON.parse(rawRemote));
-				if (remotePins) {
-					this.logService.trace('[CodexConductor] Remote pins found in storage — prioritizing over metadata.json');
-					return remotePins;
-				}
-			} catch {
-				this.logService.warn('[CodexConductor] Malformed remote pins in storage');
-			}
-		}
-
+	private async readEffectivePinsInternal(): Promise<PinDecisions> {
+		if (this.ignorePins) { return {}; }
+		// Legacy cache lacks repository/branch provenance and cannot establish authority.
 		// 3. Fall back to metadata.json on disk
-		const metadata = await this.readProjectMetadata();
-		return parsePinnedExtensions(metadata?.meta?.pinnedExtensions);
+		if (!this.metadataUri) { return {}; }
+		let content;
+		try { content = await this.fileService.readFile(this.metadataUri); }
+		catch (error) { if (!await this.fileService.exists(this.metadataUri)) { return {}; } throw error; }
+		const metadata = JSON.parse(content.value.toString().replace(/^\uFEFF/, '')) as ProjectMetadata;
+		const local = validatePinMap(metadata.meta?.pinnedExtensions === undefined ? {} : metadata.meta.pinnedExtensions);
+		const withIntent = this.policy.state.localIntent ? mergePinDecisions(local, this.policy.state.localIntent) : local;
+		return this.policy.state.remote ? mergePinDecisions(withIntent, this.policy.state.remote.pins) : withIntent;
 	}
 
 	private async readRequiredExtensionsFromMetadata(): Promise<RequiredExtensions> {
@@ -494,166 +552,12 @@ export class CodexConductorContribution extends Disposable implements IWorkbench
 	}
 
 	private async readEffectivePinnedExtensions(): Promise<PinnedExtensions> {
-		return (await this.readEffectivePinsInternal()) || {};
+		return activePins(await this.readEffectivePinsInternal());
 	}
 
 	private formatObjectForLog<T extends object>(value: T): string {
 		const sortedEntries = Object.entries(value).sort(([left], [right]) => left.localeCompare(right));
 		return JSON.stringify(Object.fromEntries(sortedEntries));
-	}
-
-	// ── Enforcement ────────────────────────────────────────────────────
-
-	private async enforce(): Promise<void> {
-		if (!this.metadataUri) {
-			return;
-		}
-
-		const workspaceFolder = this.workspaceContextService.getWorkspace().folders[0];
-		const pins = await this.readEffectivePinsInternal();
-
-		if (!pins) {
-			// No active pins — remove this project from any profile associations
-			this.removeCurrentProjectFromAssociations();
-			await this.revertIfPatchBuild();
-			return;
-		}
-
-		await this.enforcePins(pins, workspaceFolder.uri);
-	}
-
-	private async enforcePins(pins: PinnedExtensions, workspaceUri: URI): Promise<void> {
-		const installed = await this.extensionManagementService.getInstalled();
-		const mismatches: string[] = [];
-
-		for (const [id, pin] of Object.entries(pins)) {
-			const ext = installed.find(e => e.identifier.id.toLowerCase() === id.toLowerCase());
-			if (!ext || ext.manifest.version !== pin.version) {
-				mismatches.push(`${id}: expected ${pin.version}, found ${ext?.manifest.version || 'none'}`);
-			}
-		}
-
-		// Core suite must be present even if unpinned
-		const pinnedLower = new Set(Object.keys(pins).map(id => id.toLowerCase()));
-		for (const entry of this.getCoreExtensionEntries()) {
-			const id = typeof entry === 'string' ? entry : entry.id;
-			if (pinnedLower.has(id.toLowerCase())) {
-				continue;
-			}
-			const installedExt = installed.find(e => e.identifier.id.toLowerCase() === id.toLowerCase());
-			if (!installedExt) {
-				mismatches.push(`${id}: core extension missing`);
-			} else if (typeof entry !== 'string' && installedExt.manifest.version !== entry.version) {
-				mismatches.push(`${id}: core extension version mismatch (expected ${entry.version}, found ${installedExt.manifest.version})`);
-			}
-		}
-
-		if (mismatches.length === 0) {
-			return;
-		}
-
-		if (this.checkCircuitBreaker()) {
-			this.notificationService.prompt(
-				Severity.Error,
-				'Something went wrong while switching profiles.',
-				[{
-					label: 'Open in Default Profile',
-					run: () => this.switchToDefaultProfile()
-				}, {
-					label: 'Copy Error Report',
-					run: () => this.showErrorReport(pins, undefined, mismatches)
-				}]
-			);
-			return;
-		}
-
-		const targetProfileName = this.resolveProfileName(pins);
-		this.recordAttempt();
-
-		// Track this project's association with the profile
-		this.addProfileAssociation(targetProfileName, workspaceUri.toString());
-
-		this.logService.info(`[CodexConductor] Switching to profile "${targetProfileName}" — version pin active`);
-
-		const existingProfile = this.userDataProfilesService.profiles.find(p => p.name === targetProfileName);
-		if (existingProfile) {
-			if (await this.validateProfileExtensions(existingProfile, pins)) {
-				// Profile is complete — just switch.
-				this.logService.info(`[CodexConductor] Profile "${targetProfileName}" already exists and is complete — switching without download`);
-				await this.switchProfileAndReload(existingProfile);
-				return;
-			}
-			// Profile exists but is incomplete (interrupted install?) — repair it.
-			this.logService.warn(`[CodexConductor] Profile "${targetProfileName}" exists but is missing pinned extensions — repairing`);
-		}
-
-		// Reuse the existing incomplete profile or create a new one.
-		const profile = existingProfile
-			?? await this.userDataProfilesService.createNamedProfile(targetProfileName, { icon: CONDUCTOR_PROFILE_ICON });
-
-		const progressHandle = this.notificationService.notify({
-			severity: Severity.Info,
-			message: 'Installing pinned extension…',
-			progress: { infinite: true }
-		});
-
-		try {
-			await this.installPinnedExtensions(pins, profile);
-			await this.backfillCoreExtensions(profile, new Set(Object.keys(pins).map(id => id.toLowerCase())));
-		} catch (e: unknown) {
-			progressHandle.close();
-
-			// Installation failed after all retries — cleanup the incomplete profile
-			// (only if it's not the current profile, which cannot be deleted).
-			if (profile.id !== this.userDataProfileService.currentProfile.id) {
-				try {
-					await this.userDataProfilesService.removeProfile(profile);
-					this.logService.info(`[CodexConductor] Cleaned up incomplete profile "${targetProfileName}" after installation failure`);
-				} catch (cleanupError) {
-					this.logService.warn(`[CodexConductor] Failed to clean up incomplete profile "${targetProfileName}": ${cleanupError}`);
-				}
-			}
-
-			this.notificationService.prompt(
-				Severity.Error,
-				'Failed to install pinned extension.',
-				[{
-					label: 'Open in Default Profile',
-					run: () => this.switchToDefaultProfile()
-				}, {
-					label: 'Copy Error Report',
-					run: () => this.showErrorReport(pins, e)
-				}]
-			);
-			return;
-		}
-
-		progressHandle.close();
-
-		// forceReload: we installed/backfilled extensions into `profile`. If
-		// `profile` is the current profile (repair path — existing profile with
-		// missing extensions), the default "skip-when-IDs-match" reload behaviour
-		// would leave the new extensions on disk but unactivated until the next
-		// manual reload.
-		await this.switchProfileAndReload(profile, true);
-	}
-
-	private async revertIfPatchBuild(): Promise<void> {
-		if (this.userDataProfileService.currentProfile.isDefault) {
-			return;
-		}
-
-		// Only revert if the current profile was created by the conductor
-		const currentProfile = this.userDataProfileService.currentProfile;
-		if (currentProfile.icon !== CONDUCTOR_PROFILE_ICON) {
-			return;
-		}
-
-		const defaultProfile = this.userDataProfilesService.profiles.find(p => p.isDefault);
-		if (defaultProfile) {
-			this.logService.info(`[CodexConductor] No active pins — reverting from "${currentProfile.name}" to default profile`);
-			await this.switchProfileAndReload(defaultProfile);
-		}
 	}
 
 	// ── Profile lifecycle cleanup ──────────────────────────────────────
@@ -793,64 +697,6 @@ export class CodexConductorContribution extends Disposable implements IWorkbench
 		}
 	}
 
-	// ── Error reporting ────────────────────────────────────────────────
-
-	private async showErrorReport(pins: PinnedExtensions, error?: unknown, mismatches?: string[]): Promise<void> {
-		const osName = OS === OperatingSystem.Macintosh ? 'macOS' : OS === OperatingSystem.Windows ? 'Windows' : 'Linux';
-		const workspaceFolder = this.workspaceContextService.getWorkspace().folders[0];
-
-		const report = [
-			'--- Codex Conductor Error Report ---',
-			'',
-			`Codex Version: ${this.productService.version || 'unknown'} (${this.productService.commit?.slice(0, 8) || 'unknown'})`,
-			`OS: ${osName}`,
-			`Profile: ${this.userDataProfileService.currentProfile.name}`,
-			`Project: ${workspaceFolder?.name || 'unknown'}`,
-			`Online: ${navigator.onLine}`,
-			'',
-		];
-
-		if (error) {
-			const message = error instanceof Error ? error.message : String(error);
-			const code = (error as any).code ? ` [Code: ${(error as any).code}]` : '';
-			const extensionId = (error as any).extensionId ? ` [Extension: ${(error as any).extensionId}]` : '';
-			const url = (error as any).url ? ` [URL: ${(error as any).url}]` : '';
-
-			report.push('Error:');
-			report.push(`  - ${message}${code}${extensionId}${url}`);
-			report.push('');
-		}
-
-		if (mismatches && mismatches.length > 0) {
-			report.push('Mismatches:');
-			report.push(...mismatches.map(m => `  - ${m}`));
-			report.push('');
-		}
-
-		report.push('Pinned Extensions:');
-		report.push(...Object.entries(pins).map(([id, pin]) =>
-			`  - ${id}: v${pin.version} (${pin.url})`
-		));
-		report.push('');
-		report.push('---');
-
-		const fullReport = report.join('\n');
-
-		const { result } = await this.dialogService.prompt({
-			type: Severity.Error,
-			message: 'Something went wrong while switching profiles',
-			detail: fullReport,
-			buttons: [
-				{ label: 'Copy to Clipboard', run: () => true },
-			],
-			cancelButton: 'Close',
-		});
-
-		if (await result) {
-			await this.clipboardService.writeText(fullReport);
-		}
-	}
-
 	// ── Utilities ──────────────────────────────────────────────────────
 
 	/**
@@ -863,6 +709,7 @@ export class CodexConductorContribution extends Disposable implements IWorkbench
 	private async validateProfileExtensions(profile: IUserDataProfile, pins: PinnedExtensions): Promise<boolean> {
 		try {
 			const installed = await this.extensionManagementService.getInstalled(undefined, profile.extensionsResource);
+			if (this.ignorePins && ['project-accelerate.codex-editor-extension', 'frontier-rnd.frontier-authentication'].some(id => !installed.some(ext => ext.identifier.id.toLowerCase() === id && (ext.manifest as unknown as Record<string, unknown>).codexProjectPinPolicyVersion === 2))) { return false; }
 			for (const [id, pin] of Object.entries(pins)) {
 				const ext = installed.find(e => e.identifier.id.toLowerCase() === id.toLowerCase());
 				if (!ext || ext.manifest.version !== pin.version) {
@@ -903,34 +750,6 @@ export class CodexConductorContribution extends Disposable implements IWorkbench
 		const str = ids.map(id => `${id}@${pins[id].version}`).join(',');
 		for (let i = 0; i < str.length; i++) { h = (((h << 5) + h) ^ str.charCodeAt(i)) >>> 0; }
 		return `${base}+${h.toString(16).slice(0, 4)}`;
-	}
-
-	private checkCircuitBreaker(): boolean {
-		const raw = this.storageService.get(CIRCUIT_BREAKER_KEY, StorageScope.WORKSPACE);
-		if (!raw) { return false; }
-		try {
-			const attempts: number[] = JSON.parse(raw);
-			const now = Date.now();
-			const recent = attempts.filter(t => now - t < CIRCUIT_BREAKER_WINDOW_MS);
-			return recent.length >= CIRCUIT_BREAKER_MAX;
-		} catch {
-			return false;
-		}
-	}
-
-	private recordAttempt(): void {
-		const raw = this.storageService.get(CIRCUIT_BREAKER_KEY, StorageScope.WORKSPACE);
-		let attempts: number[];
-		try {
-			attempts = raw ? JSON.parse(raw) : [];
-		} catch {
-			attempts = [];
-		}
-		attempts.push(Date.now());
-		// Prune old entries to prevent unbounded growth
-		const now = Date.now();
-		attempts = attempts.filter(t => now - t < CIRCUIT_BREAKER_WINDOW_MS);
-		this.storageService.store(CIRCUIT_BREAKER_KEY, JSON.stringify(attempts), StorageScope.WORKSPACE, StorageTarget.MACHINE);
 	}
 
 	/**
@@ -1007,7 +826,8 @@ export class CodexConductorContribution extends Disposable implements IWorkbench
 	 * passed (e.g. `onStartupFinished`) won't activate until the next manual
 	 * reload, leaving the profile silently degraded.
 	 */
-	private async switchProfileAndReload(profile: IUserDataProfile, forceReload = false): Promise<void> {
+	private async switchProfileAndReload(profile: IUserDataProfile, forceReload = false, current: () => boolean = () => true): Promise<void> {
+		if (!current()) { return; }
 		const workspace = this.workspaceContextService.getWorkspace();
 		const workspaceIdentifier = toWorkspaceIdentifier(workspace);
 		const originalProfileId = this.userDataProfileService.currentProfile.id;
@@ -1030,6 +850,7 @@ export class CodexConductorContribution extends Disposable implements IWorkbench
 		// required. (Previously called resetWorkspaces() here, but that wiped every
 		// open project's associations globally.)
 		this.logService.info(`[CodexConductor] Calling setProfileForWorkspace...`);
+		if (!current()) { return; }
 		await this.userDataProfilesService.setProfileForWorkspace(workspaceIdentifier, profile);
 		this.logService.info(`[CodexConductor] setProfileForWorkspace completed`);
 
@@ -1037,21 +858,16 @@ export class CodexConductorContribution extends Disposable implements IWorkbench
 		// setProfileForWorkspace may internally trigger changeCurrentProfile which
 		// updates currentProfile even if the extension host vetos the switch. Using
 		// the post-call currentProfile.id would incorrectly skip the reload.
+		if (!current()) { return; }
 		if (forceReload || originalProfileId !== profile.id) {
 			const reason = originalProfileId !== profile.id
 				? `profile mismatch (${currentProfileName} != ${profile.name})`
 				: `extensions installed in current profile`;
 			this.logService.info(`[CodexConductor] ${reason} — triggering authoritative reload`);
-			this.hostService.reload({ forceProfile: profile.name });
+			await this.arbiter.call('release', { workspace: workspace.id, owner: this.policySession });
+			await this.hostService.reload({ forceProfile: profile.name });
 		} else {
 			this.logService.info(`[CodexConductor] Already on target profile ${profile.name} — no reload needed`);
-		}
-	}
-
-	private async switchToDefaultProfile(): Promise<void> {
-		const profile = this.userDataProfilesService.profiles.find(p => p.isDefault);
-		if (profile) {
-			await this.switchProfileAndReload(profile);
 		}
 	}
 
@@ -1061,11 +877,10 @@ export class CodexConductorContribution extends Disposable implements IWorkbench
 	 * Fail-fast by design: the sideloader's best-effort behaviour (warn + skip on
 	 * any failure) is wrong here because the resulting profile would be silently
 	 * incomplete, and the user couldn't sync, edit, or otherwise function. By
-	 * throwing, we let the caller's catch block remove the half-built profile;
-	 * the next window open will re-attempt enforcement, and the integrity check
-	 * in `validateProfileExtensions` will detect any residual incompleteness.
+	 * throwing, we let recovery persist a blocked state. Explicit retry reuses the
+	 * partial profile and verifies it before switching.
 	 */
-	private async backfillCoreExtensions(profile: IUserDataProfile, pinnedIds: Set<string>): Promise<void> {
+	private async backfillCoreExtensions(profile: IUserDataProfile, pinnedIds: Set<string>, current: () => boolean = () => true): Promise<void> {
 		const installed = await this.extensionManagementService.getInstalled(undefined, profile.extensionsResource);
 		const coreEntries = this.getCoreExtensionEntries();
 
@@ -1107,6 +922,7 @@ export class CodexConductorContribution extends Disposable implements IWorkbench
 			);
 
 			for (const id of missingGallery) {
+				if (!current()) { return; }
 				const galleryExt = galleryExtensions.find(e => e.identifier.id.toLowerCase() === id.toLowerCase());
 				if (!galleryExt) {
 					throw new Error(`Core extension "${id}" not found in gallery`);
@@ -1131,6 +947,7 @@ export class CodexConductorContribution extends Disposable implements IWorkbench
 		if (missingVsix.length > 0) {
 			const channel = this.sharedProcessService.getChannel('extensions');
 			for (const entry of missingVsix) {
+				if (!current()) { return; }
 				try {
 					// See installPinnedExtensions for why
 					// `isApplicationScoped: false` is explicit.

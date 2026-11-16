@@ -18,6 +18,9 @@ use std::{
 
 use super::context::CommandContext;
 
+#[path = "pin_metadata.rs"]
+mod pin_metadata;
+
 const CODEX_PROJECTS_DIR: &str = ".codex-projects";
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -44,8 +47,20 @@ struct Meta {
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 struct PinnedExtension {
-	version: String,
-	url: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    timestamp: Option<u64>,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    version: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    url: String,
+}
+
+fn next_pin_timestamp(previous: Option<&PinnedExtension>) -> Result<u64, AnyError> {
+    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)
+        .map_err(|e| wrap(e, "Invalid system clock"))?.as_millis() as u64;
+    let timestamp = now.max(previous.and_then(|pin| pin.timestamp).unwrap_or(0).saturating_add(1));
+    if timestamp > 9_007_199_254_740_991 { return Err(AnyError::PinningError(PinningError("Invalid pin timestamp".into()))); }
+    Ok(timestamp)
 }
 
 struct ProjectInfo {
@@ -107,19 +122,26 @@ fn discover_projects(ctx: &CommandContext) -> Result<Vec<ProjectInfo>, AnyError>
 }
 
 fn read_metadata(path: &Path) -> Result<ProjectMetadata, AnyError> {
-	let file = fs::File::open(path).map_err(|e| wrap(e, "Failed to open metadata.json"))?;
-	let metadata: ProjectMetadata = serde_json::from_reader(file).map_err(|e| wrap(e, "Failed to parse metadata.json"))?;
+	let text = fs::read_to_string(path).map_err(|e| wrap(e, "Failed to open metadata.json"))?;
+	let metadata: ProjectMetadata = serde_json::from_str(text.trim_start_matches('\u{feff}')).map_err(|e| wrap(e, "Failed to parse metadata.json"))?;
+    for (id, pin) in &metadata.meta.pinned_extensions {
+        let removal = pin.timestamp.is_some() && pin.version.is_empty() && pin.url.is_empty();
+        let active = !pin.version.trim().is_empty() && (pin.url.starts_with("https://") || pin.url.starts_with("http://"));
+        if (!removal && !active) || pin.timestamp.map_or(false, |t| t > 9_007_199_254_740_991) {
+            return Err(AnyError::PinningError(PinningError(format!("Invalid pin decision: {}", id))));
+        }
+    }
 	Ok(metadata)
 }
 
 fn write_metadata(path: &Path, metadata: &ProjectMetadata) -> Result<(), AnyError> {
-	use std::io::Write;
-	let mut file = fs::File::create(path).map_err(|e| wrap(e, "Failed to create metadata.json"))?;
-	let formatter = serde_json::ser::PrettyFormatter::with_indent(b"    ");
-	let mut ser = serde_json::Serializer::with_formatter(&mut file, formatter);
-	metadata.serialize(&mut ser).map_err(|e| wrap(e, "Failed to write metadata.json"))?;
-	file.write_all(b"\n").map_err(|e| wrap(e, "Failed to write trailing newline"))?;
-	Ok(())
+    let original = fs::read_to_string(path).map_err(|e| wrap(e, "Failed to read metadata.json"))?;
+    let mut decisions = metadata.meta.pinned_extensions.clone();
+    for pin in decisions.values_mut() { if pin.timestamp.is_none() { pin.timestamp = Some(0); } }
+    let pins = serde_json::to_value(&decisions).map_err(|e| wrap(e, "Invalid pins"))?;
+    let updated = pin_metadata::replace_pins(&original, &pins).map_err(|e| wrap(e, "Failed to edit project pins"))?;
+    fs::write(path, updated).map_err(|e| wrap(e, "Failed to write metadata.json"))?;
+    Ok(())
 }
 
 fn truncate_url(url: &str) -> String {
@@ -187,7 +209,7 @@ fn list_pins(ctx: &CommandContext, project_filter: Option<ProjectInfo>) -> Resul
 		pinned_ids.sort();
 		for id in pinned_ids {
 			let pin = &project.metadata.meta.pinned_extensions[id];
-			println!("  📌 {} {} {}", id, pin.version, pin.url);
+			if !pin.version.is_empty() { println!("  📌 {} {} {}", id, pin.version, pin.url); }
 		}
 
 		if git_available && is_metadata_dirty(&project.path) {
@@ -300,10 +322,14 @@ async fn add_pin(ctx: CommandContext, project_id: String, args: PinAddArgs) -> R
 
 	log::emit(log::Level::Info, "pin", &format!("✔ Identified: {} (v{})", extension_id, version));
 
+    // Re-read after downloading the VSIX so unrelated edits are not replaced.
+    project_info.metadata = read_metadata(&project_info.path.join("metadata.json"))?;
+    let timestamp = next_pin_timestamp(project_info.metadata.meta.pinned_extensions.get(&extension_id))?;
 	// Update metadata
 	project_info.metadata.meta.pinned_extensions.insert(
 		extension_id.clone(),
 		PinnedExtension {
+            timestamp: Some(timestamp),
 			version: version.to_string(),
 			url: resolved_url,
 		},
@@ -379,7 +405,9 @@ async fn get_vsix_metadata_full(client: &reqwest::Client, url: &str) -> Result<(
 fn remove_pin(ctx: CommandContext, project_id: String, args: PinRemoveArgs) -> Result<(), AnyError> {
 	let mut project_info = resolve_project(&ctx, &project_id)?;
 
-	if project_info.metadata.meta.pinned_extensions.remove(&args.id).is_some() {
+	if project_info.metadata.meta.pinned_extensions.get(&args.id).map_or(false, |pin| !pin.version.is_empty()) {
+        let timestamp = next_pin_timestamp(project_info.metadata.meta.pinned_extensions.get(&args.id))?;
+        project_info.metadata.meta.pinned_extensions.insert(args.id.clone(), PinnedExtension { timestamp: Some(timestamp), version: String::new(), url: String::new() });
 		let metadata_path = project_info.path.join("metadata.json");
 		write_metadata(&metadata_path, &project_info.metadata)?;
 		log::emit(log::Level::Info, "pin", &format!("✔ Removed pin for {}", args.id));
@@ -488,4 +516,22 @@ async fn sync_pin(ctx: CommandContext, project_id: String) -> Result<(), AnyErro
 	}
 
 	Ok(())
+}
+
+#[cfg(test)]
+mod timestamp_tests {
+    use super::*;
+    #[test]
+    fn timestamp_only_unpin_roundtrips_without_version_or_url() {
+        let pin: PinnedExtension = serde_json::from_str(r#"{"timestamp":123}"#).unwrap();
+        assert!(pin.version.is_empty());
+        assert_eq!(serde_json::to_value(pin).unwrap(), serde_json::json!({"timestamp":123}));
+    }
+    #[test]
+    fn explicit_edit_advances_past_previous_clock() {
+        let previous = PinnedExtension { timestamp: Some(8_000_000_000_000_000), version: String::new(), url: String::new() };
+        assert_eq!(next_pin_timestamp(Some(&previous)).unwrap(), 8_000_000_000_000_001);
+        let overflow = PinnedExtension { timestamp: Some(9_007_199_254_740_991), ..previous };
+        assert!(next_pin_timestamp(Some(&overflow)).is_err());
+    }
 }
