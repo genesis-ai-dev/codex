@@ -1,0 +1,109 @@
+name: Pin recovery test artifacts
+on:
+  push:
+    branches: [codex/timestamp-test-bd9b728]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: pin-recovery-test-${{ github.ref }}
+  cancel-in-progress: true
+env:
+  BUILD_SOURCEVERSION: bd9b7288584b8b2afa382b5ddffceaa6b567bd1b
+  APP_NAME: Codex
+  BINARY_NAME: codex
+  GH_REPO_PATH: ${{ github.repository }}
+  ORG_NAME: ${{ github.repository_owner }}
+  RELEASE_VERSION: '1.108.16453'
+  CUSTOM_RELEASE_VERSION: '1.108.16453'
+  VSCODE_ARCH: x64
+  VSCODE_QUALITY: stable
+  OS_NAME: windows
+  SHOULD_BUILD: 'yes'
+  SHOULD_BUILD_REH: 'no'
+  SHOULD_BUILD_REH_WEB: 'no'
+  CI_BUILD: 'yes'
+jobs:
+  compile:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Native build prerequisites
+        run: sudo apt-get update -y && sudo apt-get install -y libkrb5-dev
+      - name: Get pinned upstream source
+        run: ./get_repo.sh
+      - name: Compile reviewed source
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: ./build.sh
+      - name: Archive compilation
+        run: |
+          find vscode -type f -not -path '*/node_modules/*' -not -path 'vscode/.build/node/*' -not -path 'vscode/.git/*' > vscode.txt
+          [ ! -d vscode/.build/extensions/node_modules ] || echo vscode/.build/extensions/node_modules >> vscode.txt
+          echo vscode/.git >> vscode.txt
+          tar -czf vscode.tar.gz -T vscode.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pin-recovery-compiled
+          path: vscode.tar.gz
+          retention-days: 3
+  windows:
+    needs: compile
+    runs-on: windows-2022
+    timeout-minutes: 90
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - uses: actions/download-artifact@v4
+        with:
+          name: pin-recovery-compiled
+      - name: Package Windows x64
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          npm_config_arch: x64
+          npm_config_target_arch: x64
+        run: ./build/windows/package.sh
+      - name: Verify compiled policy
+        run: |
+          node -e "const p=require('./VSCode-win32-x64/resources/app/product.json');if(p.codexProjectPinPolicy!=='enforce') throw Error('Wrong policy')"
+          echo "$BUILD_SOURCEVERSION" > VSCode-win32-x64/TEST-BUILD-COMMIT.txt
+      - name: Build unsigned user and system installers
+        run: |
+          ./build/windows/rtf/make.sh
+          cd vscode
+          npm run gulp vscode-win32-x64-inno-updater
+          npm run gulp vscode-win32-x64-user-setup
+          npm run gulp vscode-win32-x64-system-setup
+          cd ..
+          mkdir -p assets
+          cp vscode/.build/win32-x64/user-setup/VSCodeSetup.exe assets/CodexUserSetup-x64-1.108.16453-bd9b728-enforce-test.exe
+          cp vscode/.build/win32-x64/system-setup/VSCodeSetup.exe assets/CodexSetup-x64-1.108.16453-bd9b728-enforce-test.exe
+          node -e "const fs=require('fs');for(const target of ['user','system']){const p=JSON.parse(fs.readFileSync('vscode/.build/win32-x64/'+target+'-setup/product.json','utf8'));if(p.codexProjectPinPolicy!=='enforce')throw Error('Wrong installer policy');}"
+          7z a -tzip assets/Codex-Windows-x64-bd9b728-enforce-test.zip ./VSCode-win32-x64
+          cd assets
+          sha256sum *.exe *.zip > SHA256SUMS.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Codex-Windows-x64-enforce-test
+          path: assets/*
+          retention-days: 7
+          if-no-files-found: error
