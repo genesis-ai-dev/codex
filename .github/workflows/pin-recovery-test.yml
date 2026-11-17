@@ -1,67 +1,20 @@
-name: Pin recovery test artifacts
+name: Pin recovery Windows installers
 on:
   push:
     branches: [codex/pin-recovery-test-builds]
   workflow_dispatch:
 permissions:
   contents: read
-concurrency:
-  group: pin-recovery-test-${{ github.ref }}
-  cancel-in-progress: true
-env:
-  APP_NAME: Codex
-  BINARY_NAME: codex
-  GH_REPO_PATH: ${{ github.repository }}
-  ORG_NAME: ${{ github.repository_owner }}
-  RELEASE_VERSION: '1.108.16453'
-  CUSTOM_RELEASE_VERSION: '1.108.16453'
-  VSCODE_ARCH: x64
-  VSCODE_QUALITY: stable
-  OS_NAME: windows
-  SHOULD_BUILD: 'yes'
-  SHOULD_BUILD_REH: 'no'
-  SHOULD_BUILD_REH_WEB: 'no'
-  CI_BUILD: 'yes'
+  actions: read
 jobs:
-  compile:
-    runs-on: ubuntu-22.04
-    timeout-minutes: 90
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          persist-credentials: false
-      - uses: actions/setup-node@v4
-        with:
-          node-version-file: .nvmrc
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-      - name: Native build prerequisites
-        run: sudo apt-get update -y && sudo apt-get install -y libkrb5-dev
-      - name: Get pinned upstream source
-        run: ./get_repo.sh
-      - name: Compile reviewed source
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: ./build.sh
-      - name: Archive compilation
-        run: |
-          find vscode -type f -not -path '*/node_modules/*' -not -path 'vscode/.build/node/*' -not -path 'vscode/.git/*' > vscode.txt
-          [ ! -d vscode/.build/extensions/node_modules ] || echo vscode/.build/extensions/node_modules >> vscode.txt
-          echo vscode/.git >> vscode.txt
-          tar -czf vscode.tar.gz -T vscode.txt
-      - uses: actions/upload-artifact@v4
-        with:
-          name: pin-recovery-compiled
-          path: vscode.tar.gz
-          retention-days: 3
-  windows:
-    needs: compile
+  installers:
     runs-on: windows-2022
-    timeout-minutes: 90
+    timeout-minutes: 45
     defaults:
       run:
         shell: bash
+    env:
+      BUILD_SOURCEVERSION: 5e3c5c76dc6b6adaf0eba488ae064486a4ea0d1b
     steps:
       - uses: actions/checkout@v4
         with:
@@ -69,26 +22,42 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version-file: .nvmrc
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
       - uses: actions/download-artifact@v4
         with:
           name: pin-recovery-compiled
-      - name: Package Windows x64
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          npm_config_arch: x64
-          npm_config_target_arch: x64
-        run: ./build/windows/package.sh
-      - name: Verify policy and record source
-        run: |
-          node -e "const p=require('./VSCode-win32-x64/resources/app/product.json'); if(p.codexProjectPinPolicy!=='ignore')process.exit(1)"
-          git rev-parse HEAD > VSCode-win32-x64/TEST-BUILD-COMMIT.txt
-          7z a -tzip Codex-win32-x64-pin-recovery.zip ./VSCode-win32-x64
-      - uses: actions/upload-artifact@v4
+          run-id: 44099139488
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+      - uses: actions/download-artifact@v4
         with:
           name: Codex-windows-x64-test
-          path: Codex-win32-x64-pin-recovery.zip
+          run-id: 44099139488
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Restore verified app and matching build source
+        run: |
+          tar -xzf vscode.tar.gz
+          7z x Codex-win32-x64-pin-recovery.zip -y
+          node -e "const fs=require('fs');const p=require('./VSCode-win32-x64/resources/app/product.json');const v=require('./VSCode-win32-x64/resources/app/package.json');if(p.codexProjectPinPolicy!=='ignore'||v.version!=='1.108.16453'||fs.readFileSync('VSCode-win32-x64/TEST-BUILD-COMMIT.txt','utf8').trim()!=='d49567b20f3d6ecad72c516158cfbd23dad8fc00')throw Error('Unexpected source artifact');"
+      - name: Install build-only JavaScript tools
+        working-directory: vscode
+        run: |
+          npm ci --ignore-scripts
+          npm ci --ignore-scripts --prefix build
+      - name: Build unsigned user and system installers
+        run: |
+          ./build/windows/rtf/make.sh
+          cd vscode
+          npm run gulp vscode-win32-x64-inno-updater
+          npm run gulp vscode-win32-x64-user-setup
+          npm run gulp vscode-win32-x64-system-setup
+          cd ..
+          mkdir -p assets
+          cp vscode/.build/win32-x64/user-setup/VSCodeSetup.exe assets/CodexUserSetup-x64-1.108.16453-5e3c5c7-test.exe
+          cp vscode/.build/win32-x64/system-setup/VSCodeSetup.exe assets/CodexSetup-x64-1.108.16453-5e3c5c7-test.exe
+          cd assets
+          sha256sum *.exe > SHA256SUMS.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Codex-Windows-x64-test-installers
+          path: assets/*
           retention-days: 7
           if-no-files-found: error
