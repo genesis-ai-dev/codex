@@ -1,0 +1,77 @@
+name: Enforced pin Windows test builds
+on:
+  push:
+    branches: [codex/enforce-pin-test-builds]
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  installers:
+    runs-on: windows-2022
+    timeout-minutes: 45
+    defaults:
+      run:
+        shell: bash
+    env:
+      BUILD_SOURCEVERSION: 7247de6844315ab6f75e887ba481750a9cf3d5db
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+      - uses: actions/download-artifact@v4
+        with:
+          name: pin-recovery-compiled
+          run-id: 44099139488
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+      - uses: actions/download-artifact@v4
+        with:
+          name: Codex-windows-x64-test
+          run-id: 44099139488
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Restore verified app and matching build source
+        run: |
+          tar -xzf vscode.tar.gz
+          7z x Codex-win32-x64-pin-recovery.zip -y
+          node -e "const fs=require('fs');const p=require('./VSCode-win32-x64/resources/app/product.json');const v=require('./VSCode-win32-x64/resources/app/package.json');if(p.codexProjectPinPolicy!=='ignore'||v.version!=='1.108.16453'||fs.readFileSync('VSCode-win32-x64/TEST-BUILD-COMMIT.txt','utf8').trim()!=='d49567b20f3d6ecad72c516158cfbd23dad8fc00')throw Error('Unexpected source artifact');"
+      - name: Select enforced pin policy in both build source and packaged app
+        run: |
+          node <<'JS'
+          const fs=require('fs');
+          const policy=JSON.parse(fs.readFileSync('product.json','utf8')).codexProjectPinPolicy;
+          if(policy!=='enforce')throw Error('Expected enforced policy');
+          for(const file of ['vscode/product.json','VSCode-win32-x64/resources/app/product.json']) {
+            const p=JSON.parse(fs.readFileSync(file,'utf8'));p.codexProjectPinPolicy=policy;p.commit=process.env.BUILD_SOURCEVERSION;
+            fs.writeFileSync(file,JSON.stringify(p,null,2)+'\n');
+          }
+          fs.writeFileSync('VSCode-win32-x64/TEST-BUILD-COMMIT.txt',process.env.BUILD_SOURCEVERSION+'\nPolicy: enforce\nEditor: 5651c715\nFrontier: 25604eb\n');
+          JS
+      - name: Install build-only JavaScript tools
+        working-directory: vscode
+        run: |
+          npm ci --ignore-scripts
+          npm ci --ignore-scripts --prefix build
+      - name: Build unsigned user and system installers
+        run: |
+          ./build/windows/rtf/make.sh
+          cd vscode
+          npm run gulp vscode-win32-x64-inno-updater
+          npm run gulp vscode-win32-x64-user-setup
+          npm run gulp vscode-win32-x64-system-setup
+          cd ..
+          mkdir -p assets
+          cp vscode/.build/win32-x64/user-setup/VSCodeSetup.exe assets/CodexUserSetup-x64-1.108.16453-7247de6-enforce-test.exe
+          cp vscode/.build/win32-x64/system-setup/VSCodeSetup.exe assets/CodexSetup-x64-1.108.16453-7247de6-enforce-test.exe
+          node -e "const fs=require('fs');for(const target of ['user','system']){const p=JSON.parse(fs.readFileSync('vscode/.build/win32-x64/'+target+'-setup/product.json','utf8'));if(p.codexProjectPinPolicy!=='enforce')throw Error('Wrong installer policy');}"
+          7z a -tzip assets/Codex-Windows-x64-7247de6-enforce-test.zip ./VSCode-win32-x64
+          cd assets
+          sha256sum *.exe *.zip > SHA256SUMS.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Codex-Windows-x64-enforce-test
+          path: assets/*
+          retention-days: 7
+          if-no-files-found: error
