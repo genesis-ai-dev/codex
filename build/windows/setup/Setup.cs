@@ -31,6 +31,19 @@ internal static class Setup {
     [DllImport("shell32.dll")]
     private static extern int SHGetKnownFolderPath(ref Guid id, uint flags, IntPtr token, out IntPtr path);
 
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern uint GetLongPathName(string path, System.Text.StringBuilder buffer, uint size);
+
+    // Node and the CLR can receive different long and DOS short spellings of TEMP.
+    private static string ExistingDirectoryName(string value) {
+        string path = FullDir(value);
+        var buffer = new System.Text.StringBuilder(32768);
+        uint length = GetLongPathName(path, buffer, (uint)buffer.Capacity);
+        if (length == 0 || length >= buffer.Capacity)
+            throw new IOException("Could not resolve the updater directory: " + path);
+        return buffer.ToString();
+    }
+
     private static string UserPrograms() {
         Guid id = new Guid("5CD7AEE2-2219-4A67-B85D-6C9CE15660CB");
         IntPtr path;
@@ -201,7 +214,12 @@ internal static class Setup {
                 throw new IOException("Unsupported silent update argument.");
             }
             string expected = Path.Combine(directory, name);
-            if (!Equal(arg.Substring(prefix.Length), expected)) throw new IOException("Unexpected updater flag location.");
+            string supplied = arg.Substring(prefix.Length);
+            if (supplied.Length > 1 && supplied[0] == '"' && supplied[supplied.Length-1] == '"')
+                supplied = supplied.Substring(1, supplied.Length-2);
+            if (!Equal(Path.GetFileName(supplied), name) ||
+                !Equal(ExistingDirectoryName(Path.GetDirectoryName(supplied)), ExistingDirectoryName(directory)))
+                throw new IOException("Unexpected updater flag location for " + prefix + " Expected " + expected + ", received " + supplied);
             flags.Add(prefix + "\"" + expected + "\"");
         }
         flags.Add("/NORESTART");

@@ -41,11 +41,15 @@ foreach ($i in 1,2) {
         Write-Host "Use Manage > Check for Updates, then Install/Restart to Update for $($versions[$i])."
     }
     Start-Process "$app\Codex.exe" -ArgumentList "--no-sandbox --disable-gpu --user-data-dir=`"$profile`" --extensions-dir=`"$extensions`""
-    $deadline = [DateTime]::UtcNow.AddMinutes(5)
+    $started = [DateTime]::UtcNow
+    $minutes = if ($Manual) { 15 } else { 5 }
+    $deadline = $started.AddMinutes($minutes)
     do {
         Start-Sleep 2
-        $errors = @(Get-ChildItem -LiteralPath $env:TEMP -Filter 'CodexUpdateError-*.log')
-        if ($errors.Count) { throw (Get-Content $errors[0].FullName -Raw) }
+        if (!$Manual) {
+            $errors = @(Get-ChildItem -LiteralPath $env:TEMP -Filter 'CodexUpdateError-*.log' | Where-Object LastWriteTimeUtc -gt $started)
+            if ($errors.Count) { throw (Get-Content $errors[0].FullName -Raw) }
+        }
         try { $current = Read-Product } catch { $current = $null }
     } until (($current -and $current.version -eq $versions[$i]) -or [DateTime]::UtcNow -ge $deadline)
     if (!$current -or $current.version -ne $versions[$i] -or $current.target -ne $Scope) {
