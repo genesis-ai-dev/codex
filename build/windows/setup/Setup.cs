@@ -240,6 +240,20 @@ internal static class Setup {
         }
     }
 
+    internal static int UpdateInstalled(string[] args, Assembly assembly, List<Installation> installed,
+                                        Dictionary<string, string> settings) {
+        string package = assembly.Location;
+        var existing = UpdateTarget(installed, Path.GetDirectoryName(package), settings["arch"],
+            settings["win32" + settings["arch"] + "UserAppId"].Substring(1),
+            settings["win32" + settings["arch"] + "AppId"].Substring(1));
+        var flags = UpdateFlags(args, package, existing.Root);
+        string payload = ExtractPayload(assembly, existing.Machine);
+        try {
+            Launch(payload, flags, existing.Machine);
+            return 0;
+        } finally { File.Delete(payload); }
+    }
+
     private static int Install(string[] args) {
         var assembly = Assembly.GetExecutingAssembly();
         using (var input = new StreamReader(assembly.GetManifestResourceStream("config")))
@@ -247,18 +261,8 @@ internal static class Setup {
         uint msi = MsiEnumRelatedProducts("{965370CD-253C-4720-82FC-2E6B02A53808}", 0, 0, new System.Text.StringBuilder(39));
         if (msi != 259) throw new IOException(msi == 0 ? "An MSI installation is registered. Update it with the MSI or remove it through Windows Installed apps before switching installer types." : "Windows Installer could not verify the installed products.");
         var installed = Inventory();
-        if (args.Length != 0) {
-            string package = assembly.Location;
-            var existing = UpdateTarget(installed, Path.GetDirectoryName(package), config["arch"],
-                config["win32" + config["arch"] + "UserAppId"].Substring(1),
-                config["win32" + config["arch"] + "AppId"].Substring(1));
-            var flags = UpdateFlags(args, package, existing.Root);
-            string payload = ExtractPayload(assembly, existing.Machine);
-            try {
-                Launch(payload, flags, existing.Machine);
-                return 0;
-            } finally { File.Delete(payload); }
-        }
+        if (args.Length != 0)
+            return UpdateInstalled(args, assembly, installed, config);
         bool? choice = Choose(DefaultMachineScope(installed), installed);
         if (!choice.HasValue) return 2;
         bool machine = choice.Value;
