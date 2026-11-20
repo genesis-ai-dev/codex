@@ -44,6 +44,8 @@ foreach ($i in 1,2) {
     $deadline = [DateTime]::UtcNow.AddMinutes(5)
     do {
         Start-Sleep 2
+        $errors = @(Get-ChildItem -LiteralPath $env:TEMP -Filter 'CodexUpdateError-*.log')
+        if ($errors.Count) { throw (Get-Content $errors[0].FullName -Raw) }
         try { $current = Read-Product } catch { $current = $null }
     } until (($current -and $current.version -eq $versions[$i]) -or [DateTime]::UtcNow -ge $deadline)
     if (!$current -or $current.version -ne $versions[$i] -or $current.target -ne $Scope) {

@@ -235,7 +235,18 @@ internal static class Setup {
             }
         } catch (Exception e) {
             if (args.Length == 0) MessageBox.Show(e.Message, title, MessageBoxButtons.OK, MessageBoxIcon.Error);
-            else Console.Error.WriteLine(e.Message);
+            else {
+                Console.Error.WriteLine(e.Message);
+                // The updater detaches with stderr discarded. Honour its /log request.
+                if (args.Contains("/log", StringComparer.OrdinalIgnoreCase)) {
+                    try {
+                        string log = Path.Combine(Path.GetTempPath(), "CodexUpdateError-" + Guid.NewGuid().ToString("N") + ".log");
+                        using (var stream = new FileStream(log, FileMode.CreateNew, FileAccess.Write))
+                        using (var writer = new StreamWriter(stream)) writer.WriteLine(e);
+                    } catch (IOException) { }
+                    catch (UnauthorizedAccessException) { }
+                }
+            }
             return 1;
         }
     }

@@ -37,10 +37,10 @@ try {
 `$ErrorActionPreference = 'Stop'
 `$env:CODEX_DISPOSABLE_UPDATE_TEST = '1'
 try {
-    Add-Content '$log' 'Starting standard-user update test'
+    Write-Output 'Starting standard-user update test' | Out-File '$log' -Encoding unicode
     & '$script' -Directory '$root' *>> '$log'
     exit 0
-} catch { Add-Content '$log' (`$_.Exception.ToString() + `$_.ScriptStackTrace); exit 1 }
+} catch { (`$_.Exception.ToString() + `$_.ScriptStackTrace) | Out-File '$log' -Append -Encoding unicode; exit 1 }
 "@ | Set-Content $runner
     & icacls $runner /grant ("${principal}:(RX)") | Out-Null
     Start-Service seclogon
@@ -48,7 +48,7 @@ try {
     $testProcess = Start-Process "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" -Credential $credential -LoadUserProfile -WorkingDirectory $root -PassThru -ArgumentList "-NoProfile -ExecutionPolicy Bypass -File `"$runner`""
     if (!$testProcess.WaitForExit(840000)) { throw 'Standard-user staging client timed out' }
     Get-Content $log
-    if ($testProcess.ExitCode -ne 0 -or !(Select-String -Quiet -SimpleMatch 'Verified user installation 1.108.13184' $log)) {
+    if (($null -ne $testProcess.ExitCode -and $testProcess.ExitCode -ne 0) -or !(Select-String -Quiet -SimpleMatch 'Verified user installation 1.108.13184' $log)) {
         throw "Live update test failed (client exit $($testProcess.ExitCode))"
     }
     if ((Get-FileHash $machineManifest).Hash -ne $before) { throw 'User update changed the system installation' }
