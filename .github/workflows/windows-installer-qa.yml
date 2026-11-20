@@ -1,0 +1,38 @@
+name: Package Windows scope installer for QA
+on:
+  push:
+    branches: [codex/windows-scope-installer-qa]
+permissions:
+  contents: read
+  actions: read
+jobs:
+  bundle:
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          name: Codex-Windows-x64-enforce-test
+          run-id: 44174974157
+          github-token: ${{ github.token }}
+          path: previous
+      - name: Bundle verified test payloads
+        shell: bash
+        run: |
+          cd previous
+          sha256sum -c SHA256SUMS.txt
+          unzip -p Codex-Windows-x64-25e74e4-enforce-test.zip VSCode-win32-x64/resources/app/product.json > product.json
+          mv CodexUserSetup-x64-1.108.16453-25e74e4-enforce-test.exe CodexUserSetup-x64-1.108.16453.exe
+          mv CodexSetup-x64-1.108.16453-25e74e4-enforce-test.exe CodexSetup-x64-1.108.16453.exe
+          powershell.exe -NoProfile -ExecutionPolicy Bypass -File ../build/windows/setup/bundle.ps1 -Arch x64 -Version 1.108.16453 -ProductPath product.json -Assets .
+          sha256sum CodexInstall-*.exe > installer.sha256
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Codex-scope-installer-x64
+          path: |
+            previous/CodexInstall-*.exe
+            previous/installer.sha256
+          retention-days: 7
+          if-no-files-found: error
