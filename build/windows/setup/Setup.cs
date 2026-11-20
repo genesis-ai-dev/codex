@@ -157,30 +157,108 @@ internal static class Setup {
             throw new IOException("Another application or files already occupy " + dest);
     }
 
+    // Released clients cache the downloaded EXE under codex-stable-{user|system}-{arch}.
+    // Both feeds can use the same payload while the cache still identifies the requesting scope.
+    internal static Installation UpdateTarget(List<Installation> installed, string packageDir, string arch,
+                                               string userId, string systemId) {
+        string cache = Path.GetTempPath();
+        bool userCache = Equal(packageDir, Path.Combine(cache, "codex-stable-user-" + arch));
+        bool systemCache = Equal(packageDir, Path.Combine(cache, "codex-stable-system-" + arch));
+        if (!userCache && !systemCache && Equal(Path.GetDirectoryName(packageDir), cache.TrimEnd('\\')) &&
+            Path.GetFileName(packageDir).StartsWith("codex-stable-", StringComparison.OrdinalIgnoreCase))
+            throw new IOException("Updater cache architecture or scope does not match this package.");
+        var matches = installed.Where(i => i.Id == (i.Machine ? systemId : userId)
+            && (!userCache || !i.Machine) && (!systemCache || i.Machine)).ToList();
+        if (matches.Count != 1 || (!userCache && !systemCache && installed.Count != 1))
+            throw new IOException("Silent update requires one verified installation or a matching Codex updater cache.");
+        var target = matches[0];
+        if (target.Machine && !TrustedMachineRoot(target.Root))
+            throw new IOException("Cannot silently update an unverified machine directory.");
+        if (installed.Any(i => i != target && Overlap(i.Root, target.Root)) || Directory.Exists(Path.Combine(target.Root, "data")))
+            throw new IOException("Silent update requires an independent installation directory without portable data.");
+        return target;
+    }
+
+    internal static string UpdateFlags(string[] args, string package, string destination) {
+        if (!args.Any(a => Equal(a, "/silent") || Equal(a, "/verysilent")))
+            throw new IOException("Expected /silent or /verysilent.");
+        var flags = new List<string>();
+        var directory = Path.GetDirectoryName(package);
+        foreach (var arg in args) {
+            if (new[] { "/silent", "/verysilent", "/log", "/nocloseapplications",
+                        "/mergetasks=runcode,!desktopicon,!quicklaunchicon" }.Contains(arg, StringComparer.OrdinalIgnoreCase)) {
+                flags.Add(arg);
+                continue;
+            }
+            string prefix, name;
+            if (arg.StartsWith("/update=", StringComparison.OrdinalIgnoreCase)) {
+                prefix = "/update=";
+                name = Path.GetFileNameWithoutExtension(package) + ".flag";
+            } else if (arg.StartsWith("/sessionend=", StringComparison.OrdinalIgnoreCase)) {
+                prefix = "/sessionend=";
+                name = "session-ending.flag";
+            } else {
+                throw new IOException("Unsupported silent update argument.");
+            }
+            string expected = Path.Combine(directory, name);
+            if (!Equal(arg.Substring(prefix.Length), expected)) throw new IOException("Unexpected updater flag location.");
+            flags.Add(prefix + "\"" + expected + "\"");
+        }
+        flags.Add("/NORESTART");
+        flags.Add("/DIR=\"" + destination + "\"");
+        return String.Join(" ", flags);
+    }
+
+    private static string ExtractPayload(Assembly assembly, bool machine) {
+        string path = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N") + ".exe");
+        using (var file = new FileStream(path, FileMode.CreateNew, FileAccess.Write)) {
+            try {
+                using (var input = assembly.GetManifestResourceStream(machine ? "system" : "user")) input.CopyTo(file);
+            } catch {
+                file.Close();
+                File.Delete(path);
+                throw;
+            }
+        }
+        return path;
+    }
+
     [STAThread]
     private static int Main(string[] args) {
         try {
-            if (args.Length != 0) throw new IOException("For unattended deployment use the scope-specific installer.");
             if (new WindowsPrincipal(WindowsIdentity.GetCurrent()).IsInRole(WindowsBuiltInRole.Administrator))
                 throw new IOException("Start setup from your normal Windows session. Windows will request administrator access for an all-users installation.");
             using (var mutex = new Mutex(false, @"Global\CodexTranslationEditorScopeSetup")) {
                 try { if (!mutex.WaitOne(0)) throw new IOException("Another Codex Translation Editor setup is running."); }
                 catch (AbandonedMutexException) { }
-                try { return Install(); } finally { mutex.ReleaseMutex(); }
+                try { return Install(args); } finally { mutex.ReleaseMutex(); }
             }
         } catch (Exception e) {
-            MessageBox.Show(e.Message, title, MessageBoxButtons.OK, MessageBoxIcon.Error);
+            if (args.Length == 0) MessageBox.Show(e.Message, title, MessageBoxButtons.OK, MessageBoxIcon.Error);
+            else Console.Error.WriteLine(e.Message);
             return 1;
         }
     }
 
-    private static int Install() {
+    private static int Install(string[] args) {
         var assembly = Assembly.GetExecutingAssembly();
         using (var input = new StreamReader(assembly.GetManifestResourceStream("config")))
             config = Json.Deserialize<Dictionary<string,string>>(input.ReadToEnd());
         uint msi = MsiEnumRelatedProducts("{965370CD-253C-4720-82FC-2E6B02A53808}", 0, 0, new System.Text.StringBuilder(39));
         if (msi != 259) throw new IOException(msi == 0 ? "An MSI installation is registered. Update it with the MSI or remove it through Windows Installed apps before switching installer types." : "Windows Installer could not verify the installed products.");
         var installed = Inventory();
+        if (args.Length != 0) {
+            string package = assembly.Location;
+            var existing = UpdateTarget(installed, Path.GetDirectoryName(package), config["arch"],
+                config["win32" + config["arch"] + "UserAppId"].Substring(1),
+                config["win32" + config["arch"] + "AppId"].Substring(1));
+            var flags = UpdateFlags(args, package, existing.Root);
+            string payload = ExtractPayload(assembly, existing.Machine);
+            try {
+                Launch(payload, flags, existing.Machine);
+                return 0;
+            } finally { File.Delete(payload); }
+        }
         bool? choice = Choose(DefaultMachineScope(installed), installed);
         if (!choice.HasValue) return 2;
         bool machine = choice.Value;
@@ -199,10 +277,8 @@ internal static class Setup {
             String.Join("\n", obsolete.Select(i => i.Root + (i.Machine ? " (all users)" : " (current user)"))),
             title, MessageBoxButtons.OKCancel, MessageBoxIcon.Question, MessageBoxDefaultButton.Button2) != DialogResult.OK) return 2;
 
-        string temp = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N") + ".exe");
+        string temp = ExtractPayload(assembly, machine);
         try {
-            using (var file = new FileStream(temp, FileMode.CreateNew, FileAccess.Write))
-            using (var input = assembly.GetManifestResourceStream(machine ? "system" : "user")) input.CopyTo(file);
             string flags = "/SP- /SILENT /NORESTART /RESTARTEXITCODE=3010 /MERGETASKS=\"!runcode,!addtopath\" /DIR=\"" + dest + "\"";
             Launch(temp, flags, machine);
             VerifyProduct(dest, machine, config["version"]);

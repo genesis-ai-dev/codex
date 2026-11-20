@@ -29,6 +29,28 @@ internal static class SetupTests {
             Reject(() => Setup.ValidatePlan(new List<Setup.Installation>(), "new", root));
             Reject(() => Setup.FullDir(Path.GetPathRoot(root)));
             if (!Setup.Overlap(root.ToUpperInvariant(), root) || Setup.Overlap(root, root + "-other")) return 1;
+            var user = registered[0];
+            var system = new Setup.Installation { Id = "system", Machine = true,
+                Root = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "Codex") };
+            var both = new List<Setup.Installation> { system, user };
+            var cache = Path.GetTempPath();
+            var userCache = Path.Combine(cache, "codex-stable-user-x64");
+            var systemCache = Path.Combine(cache, "codex-stable-system-x64");
+            if (Setup.UpdateTarget(both, userCache, "x64", user.Id, system.Id) != user ||
+                Setup.UpdateTarget(both, systemCache, "x64", user.Id, system.Id) != system ||
+                Setup.UpdateTarget(registered, root, "x64", user.Id, system.Id) != user) return 1;
+            Reject(() => Setup.UpdateTarget(both, root, "x64", user.Id, system.Id));
+            Reject(() => Setup.UpdateTarget(registered, systemCache, "x64", user.Id, system.Id));
+            Reject(() => Setup.UpdateTarget(registered, userCache, "arm64", user.Id, system.Id));
+            string package = Path.Combine(root, "CodeSetup-stable-abc.exe");
+            string marker = Path.ChangeExtension(package, ".flag");
+            var flags = Setup.UpdateFlags(new[] { "/verysilent", "/log", "/update=" + marker,
+                "/sessionend=" + Path.Combine(root, "session-ending.flag"), "/nocloseapplications",
+                "/mergetasks=runcode,!desktopicon,!quicklaunchicon" }, package, root);
+            if (!flags.Contains("/update=\"" + marker + "\"") || !flags.Contains("/DIR=\"" + root + "\"") ||
+                !Setup.UpdateFlags(new[] { "/silent", "/log" }, package, root).Contains("/silent")) return 1;
+            Reject(() => Setup.UpdateFlags(new[] { "/silent", "/DIR=C:\\other" }, package, root));
+            Reject(() => Setup.UpdateFlags(new[] { "/verysilent", "/update=invalid" }, package, root));
             var testKey = @"Software\CodexTranslationEditorTests\" + Guid.NewGuid();
             try {
                 using (var hive = Microsoft.Win32.Registry.CurrentUser.CreateSubKey(testKey))
