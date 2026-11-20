@@ -23,7 +23,7 @@ internal static class Setup {
     private const string Uninstall = @"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\";
     private static readonly JavaScriptSerializer Json = new JavaScriptSerializer();
     private static Dictionary<string, string> config;
-    private static string title = "Codex Translation Editor Setup";
+    private const string title = "Codex Translation Editor Setup";
 
     [DllImport("msi.dll", CharSet = CharSet.Unicode)]
     private static extern uint MsiEnumRelatedProducts(string upgrade, uint reserved, uint index, System.Text.StringBuilder product);
@@ -44,9 +44,15 @@ internal static class Setup {
         string path = Path.GetFullPath(value).TrimEnd('\\');
         if (path.Length < 4) throw new IOException("A drive root cannot be an installation directory.");
         for (DirectoryInfo d = new DirectoryInfo(path); d != null; d = d.Parent)
-            if (d.Exists && (d.Attributes & FileAttributes.ReparsePoint) != 0)
+            if (((ExistingAttributes(d.FullName) ?? 0) & FileAttributes.ReparsePoint) != 0)
                 throw new IOException("Installation directory uses a junction or symbolic link: " + d.FullName);
         return path;
+    }
+
+    private static FileAttributes? ExistingAttributes(string path) {
+        try { return File.GetAttributes(path); }
+        catch (FileNotFoundException) { return null; }
+        catch (DirectoryNotFoundException) { return null; }
     }
 
     private static bool Equal(string a, string b) { return String.Equals(a, b, StringComparison.OrdinalIgnoreCase); }
@@ -128,8 +134,10 @@ internal static class Setup {
     }
 
     private static bool TrustedMachineRoot(string path) {
-        return new[] { "Codex", "Codex-arm64", "Codex-x64" }.Any(name =>
-            Equal(path, FullDir(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), name))));
+        var parents = new[] { Environment.SpecialFolder.ProgramFiles, Environment.SpecialFolder.ProgramFilesX86 }
+            .Select(Environment.GetFolderPath).Where(dir => !String.IsNullOrEmpty(dir));
+        return parents.Any(dir => new[] { "Codex", "Codex-arm64", "Codex-x64" }
+            .Any(name => Equal(path, FullDir(Path.Combine(dir, name)))));
     }
 
     internal static void ValidatePlan(List<Installation> installed, string targetId, string dest) {
@@ -145,7 +153,7 @@ internal static class Setup {
                 throw new IOException("Machine installation uses a custom directory. Remove it through Windows Installed apps first: " + old.Root);
         }
         if (!installed.Any(i => i.Id == targetId && Equal(i.Root, dest)) &&
-            Directory.Exists(dest) && Directory.EnumerateFileSystemEntries(dest).Any())
+            ExistingAttributes(dest).HasValue && Directory.EnumerateFileSystemEntries(dest).Any())
             throw new IOException("Another application or files already occupy " + dest);
     }
 
@@ -206,6 +214,9 @@ internal static class Setup {
                 ValidatePlan(Inventory(), id, dest);
                 if (!Equal(old.Uninstaller, registered.Uninstaller)) throw new IOException("Installation changed during setup.");
                 Launch(registered.Uninstaller, "/SILENT /NORESTART", registered.Machine);
+                if (File.Exists(Path.Combine(old.Root, "Codex.exe")))
+                    throw new IOException("Windows has not removed the old program in " + old.Root +
+                        ". Close running copies and check Windows Installed apps before continuing.");
             }
             if (obsolete.Any(i => i.Machine == machine)) Launch(temp, flags, machine); // Restore same-hive shortcuts and file associations.
             VerifyProduct(dest, machine, config["version"]);
