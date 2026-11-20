@@ -164,6 +164,10 @@ elif [[ "${OS_NAME}" == "windows" ]]; then
     mv "vscode\\.build\\win32-${VSCODE_ARCH}\\user-setup\\VSCodeSetup.exe" "assets\\${APP_NAME}UserSetup-${VSCODE_ARCH}-${RELEASE_VERSION}.exe"
   fi
 
+  if [[ "${VSCODE_QUALITY:-stable}" == "stable" && "${SHOULD_BUILD_EXE_SYS}" != "no" && "${SHOULD_BUILD_EXE_USR}" != "no" && "${DEFER_SCOPE_INSTALLER:-no}" != "yes" ]]; then
+    powershell.exe -NoProfile -ExecutionPolicy Bypass -File build/windows/setup/bundle.ps1 -Arch "${VSCODE_ARCH}" -Version "${RELEASE_VERSION}"
+  fi
+
   if [[ "${VSCODE_ARCH}" == "ia32" || "${VSCODE_ARCH}" == "x64" ]]; then
     if [[ "${SHOULD_BUILD_MSI}" != "no" ]]; then
       echo "Moving MSI"

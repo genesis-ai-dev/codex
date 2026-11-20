@@ -62,6 +62,12 @@ brew install --cask codex-insiders
 
 *Note for macOS users: if you can't open the App, please read [the following troubleshooting](https://github.com/BiblioNexus-Foundation/codex/blob/master/docs/troubleshooting.md#macos).*
 
+#### Windows installer
+
+Download `CodexInstall-x64-<version>.exe` for Intel or AMD PCs, or `CodexInstall-arm64-<version>.exe` for Windows on Arm. Start it from your normal Windows account. Setup detects registered Codex Translation Editor installations for your account and the machine. Keep the selected scope to update, or choose another scope to migrate. Changing away from an all-users installation affects everyone on that PC.
+
+Setup verifies the destination before running the previous installation's registered uninstaller. If Windows cancels elevation or cleanup fails, run setup again. MSI-managed installations must be updated through Windows Installer. Portable ZIP copies and installations belonging to other individual Windows accounts are outside this migration. The scope-specific EXEs remain available for automatic updates and unattended deployment.
+
 #### <a id="install-with-winget"></a>Install with Windows Package Manager (WinGet)
 
 If you use Windows and have [Windows Package Manager](https://github.com/microsoft/winget-cli) installed:
