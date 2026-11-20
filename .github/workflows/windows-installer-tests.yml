@@ -1,0 +1,22 @@
+name: Windows installer checks
+on:
+  push:
+    branches: [codex/coordinated-pin-recovery]
+    paths: ['build/windows/setup/**', '.github/workflows/windows-installer-tests.yml']
+  pull_request:
+    paths: ['build/windows/setup/**', '.github/workflows/windows-installer-tests.yml']
+permissions:
+  contents: read
+jobs:
+  test:
+    strategy:
+      matrix:
+        runner: [windows-2022, windows-11-arm]
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Compile and test Windows migration rules
+        shell: powershell
+        run: ./build/windows/setup/test.ps1
