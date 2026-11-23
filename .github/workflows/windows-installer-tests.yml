@@ -19,15 +19,7 @@ jobs:
           persist-credentials: false
       - name: Compile and test Windows migration rules
         shell: powershell
-        env:
-          CODEX_SETUP_PREVIEW: ${{ runner.temp }}/scope-page.png
         run: ./build/windows/setup/test.ps1
-      - uses: actions/upload-artifact@v4
-        if: matrix.runner == 'windows-2022'
-        with:
-          name: windows-setup-preview
-          path: ${{ runner.temp }}/scope-page.png
-          retention-days: 7
       - name: Replay consecutive Windows updates for both installed scopes
         shell: powershell
         run: ./build/windows/setup/test-update-chain.ps1

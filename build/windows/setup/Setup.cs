@@ -141,31 +141,6 @@ internal static class Setup {
         return installed.Any(i => i.Machine);
     }
 
-    // TASKDIALOGCONFIG and TASKDIALOG_BUTTON use one-byte packing in commctrl.h.
-    [StructLayout(LayoutKind.Sequential, Pack = 1, CharSet = CharSet.Unicode)]
-    private struct TaskDialogConfig {
-        public uint Size;
-        public IntPtr Parent, Instance;
-        public uint Flags, CommonButtons;
-        public string Title;
-        public IntPtr Icon;
-        public string Instruction, Content;
-        public uint ButtonCount;
-        public IntPtr Buttons;
-        public int DefaultButton;
-        public uint RadioCount;
-        public IntPtr Radios;
-        public int DefaultRadio;
-        public IntPtr Verification, Expanded, ExpandedLabel, CollapsedLabel, FooterIcon, Footer, Callback, Data;
-        public uint Width;
-    }
-
-    [StructLayout(LayoutKind.Sequential, Pack = 1)]
-    private struct ScopeButton { public int Id; public IntPtr Label; }
-
-    [DllImport("comctl32.dll", ExactSpelling = true)]
-    private static extern int TaskDialogIndirect(ref TaskDialogConfig config, out int button, IntPtr radio, IntPtr verified);
-
     internal static string ScopeLabel(List<Installation> installed, bool machine) {
         var paths = installed.Where(i => i.Machine == machine).Select(i => i.Root)
             .Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
@@ -173,31 +148,40 @@ internal static class Setup {
         return paths.Length == 0 ? name : name + " (currently installed)\n" + String.Join("\n", paths);
     }
 
-    internal static bool? Choose(List<Installation> installed) {
-        const int currentUser = 100, allUsers = 101;
-        var buttons = new ScopeButton[2];
-        var pinned = GCHandle.Alloc(buttons, GCHandleType.Pinned);
+    private static string Destination(List<Installation> installed, bool machine) {
+        string id = ScopeId(machine);
+        var target = installed.SingleOrDefault(i => i.Id == id);
+        if (target != null) return target.Root;
+        string path = FullDir(Path.Combine(machine ? Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles) : UserPrograms(), "Codex"));
+        return installed.Any(i => Equal(i.Root, path)) ? FullDir(path + "-" + config["arch"]) : path;
+    }
+
+    private static string ScopeId(bool machine) {
+        return config["win32" + config["arch"] + (machine ? "AppId" : "UserAppId")].Substring(1);
+    }
+
+    private static bool? Plan(Assembly assembly, List<Installation> installed, out string destination) {
+        destination = null;
+        string plan = Path.GetTempFileName();
         try {
-            buttons[0] = new ScopeButton { Id = currentUser, Label = Marshal.StringToHGlobalUni(ScopeLabel(installed, false)) };
-            buttons[1] = new ScopeButton { Id = allUsers, Label = Marshal.StringToHGlobalUni(ScopeLabel(installed, true)) };
-            using (var icon = System.Drawing.Icon.ExtractAssociatedIcon(Application.ExecutablePath)) {
-                var dialog = new TaskDialogConfig {
-                    Size = (uint)Marshal.SizeOf(typeof(TaskDialogConfig)), Title = "Setup - Codex",
-                    Flags = 0x10 | 0x2 | 0x8, // command links, HICON, allow cancellation
-                    CommonButtons = 0x8, // Cancel
-                    Instruction = "Who should Codex be installed for?", Icon = icon.Handle,
-                    Content = "Installing for all users requires administrator access.",
-                    Buttons = pinned.AddrOfPinnedObject(), ButtonCount = 2,
-                    DefaultButton = DefaultMachineScope(installed) ? allUsers : currentUser
-                };
-                int result;
-                Marshal.ThrowExceptionForHR(TaskDialogIndirect(ref dialog, out result, IntPtr.Zero, IntPtr.Zero));
-                return result == allUsers ? true : result == currentUser ? (bool?)false : null;
+            var lines = new List<string> { "[setup]", "default=" + (DefaultMachineScope(installed) ? "1" : "0") };
+            foreach (bool machine in new[] { false, true }) {
+                string key = machine ? "system" : "user";
+                lines.Add(key + "=" + Destination(installed, machine));
+                lines.Add(key + "Label=" + ScopeLabel(installed, machine).Replace("\n", " - "));
+                lines.Add(key + "Fixed=" + (machine || installed.Any(i => i.Id == ScopeId(machine)) ? "1" : "0"));
             }
-        } finally {
-            foreach (var button in buttons) Marshal.FreeHGlobal(button.Label);
-            pinned.Free();
-        }
+            File.WriteAllLines(plan, lines, System.Text.Encoding.Unicode);
+            string planner = ExtractPayload(assembly, false);
+            try {
+                int code = RunSetup(planner, "/SP- /CodexPlan=\"" + plan + "\"", false);
+                if (code != 2) { RequireSuccess(code); throw new IOException("Setup did not return an installation plan."); }
+            } finally { File.Delete(planner); }
+            var result = File.ReadAllLines(plan);
+            if (result.Length != 2 || (result[0] != "user" && result[0] != "system")) return null;
+            destination = FullDir(result[1]);
+            return result[0] == "system";
+        } finally { File.Delete(plan); }
     }
 
     private static bool TrustedMachineRoot(string path) {
@@ -372,17 +356,14 @@ internal static class Setup {
         var installed = Inventory();
         if (args.Length != 0)
             return UpdateInstalled(args, assembly, installed, config);
-        bool? choice = Choose(installed);
+        string dest;
+        bool? choice = Plan(assembly, installed, out dest);
         if (!choice.HasValue) return 2;
         bool machine = choice.Value;
-        string id = config["win32" + config["arch"] + (machine ? "AppId" : "UserAppId")].Substring(1);
-        var target = installed.SingleOrDefault(i => i.Id == id);
-        string dest = target != null ? target.Root : FullDir(Path.Combine(machine ? Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles) :
-            UserPrograms(), "Codex"));
-        // Different architecture IDs can historically share the default directory.
-        // Use a distinct destination so its predecessor can remain usable until verification.
-        if (target == null && installed.Any(i => Equal(i.Root, dest)))
-            dest = FullDir(dest + "-" + config["arch"]);
+        string id = ScopeId(machine);
+        installed = Inventory();
+        if (installed.Any(i => i.Id == id && !Equal(i.Root, dest)))
+            throw new IOException("The existing installation folder changed. Run setup again.");
         ValidatePlan(installed, id, dest);
         if (machine && !TrustedMachineRoot(dest)) throw new IOException("All-users setup requires a standard protected Codex program directory.");
         var obsolete = installed.Where(i => i.Id != id).ToList();
@@ -392,7 +373,7 @@ internal static class Setup {
 
         string temp = ExtractPayload(assembly, machine);
         try {
-            string flags = WizardFlags(dest);
+            string flags = WizardFlags(dest) + " /CodexAcceptedLicense=1";
             int result;
             try { result = RunSetup(temp, flags, machine); }
             catch (System.ComponentModel.Win32Exception e) {

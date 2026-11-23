@@ -1,30 +1,99 @@
 diff --git a/build/win32/code.iss b/build/win32/code.iss
 --- a/build/win32/code.iss
 +++ b/build/win32/code.iss
-@@ -1305,6 +1305,17 @@
+@@ -1305,6 +1305,77 @@
  end;
  
  // Don't allow installing conflicting architectures
-+// The scope launcher has already verified this directory and confirmed any migration.
++var
++  PlanFile: String;
++  ScopePage: TInputOptionWizardPage;
++  FolderPage: TInputDirWizardPage;
++  LastScope: Integer;
++  PlanComplete: Boolean;
++
 +function FromScopeLauncher(): Boolean;
 +begin
 +  Result := ExpandConstant('{param:CodexScopeSetup|0}') = '1';
 +end;
 +
++procedure InitializeWizard();
++begin
++#if "user" == InstallTarget
++  PlanFile := ExpandConstant('{param:CodexPlan|}');
++  if PlanFile <> '' then begin
++    LastScope := -1;
++    ScopePage := CreateInputOptionPage(wpLicense, 'Select Installation Scope',
++      'Who should Codex be installed for?', 'Select an installation scope. All Users requires administrator access.', True, False);
++    ScopePage.Add(GetIniString('setup', 'userLabel', 'Current User', PlanFile));
++    ScopePage.Add(GetIniString('setup', 'systemLabel', 'All Users', PlanFile));
++    ScopePage.SelectedValueIndex := GetIniInt('setup', 'default', 0, 0, 1, PlanFile);
++    FolderPage := CreateInputDirPage(ScopePage.ID, SetupMessage(msgWizardSelectDir),
++      'Choose the destination folder for Codex.', 'Setup will install Codex in the following folder.', False, '');
++    FolderPage.Add('');
++  end;
++#endif
++end;
++
++procedure CurPageChanged(CurPageID: Integer);
++var Key: String; Editable: Boolean;
++begin
++  if PlanFile = '' then Exit;
++  if CurPageID <> FolderPage.ID then Exit;
++  if ScopePage.SelectedValueIndex = 1 then Key := 'system' else Key := 'user';
++  if LastScope <> ScopePage.SelectedValueIndex then
++    FolderPage.Values[0] := GetIniString('setup', Key, '', PlanFile);
++  LastScope := ScopePage.SelectedValueIndex;
++  Editable := GetIniString('setup', Key + 'Fixed', '1', PlanFile) = '0';
++  FolderPage.Edits[0].ReadOnly := not Editable;
++  FolderPage.Buttons[0].Enabled := Editable;
++end;
++
++function NextButtonClick(CurPageID: Integer): Boolean;
++var Lines: TArrayOfString;
++begin
++  Result := True;
++  if PlanFile = '' then Exit;
++  if CurPageID <> FolderPage.ID then Exit;
++  Result := False;
++  SetArrayLength(Lines, 2);
++  if ScopePage.SelectedValueIndex = 1 then Lines[0] := 'system' else Lines[0] := 'user';
++  Lines[1] := FolderPage.Values[0];
++  if not SaveStringsToUTF8File(PlanFile, Lines, False) then
++    RaiseException('Could not save the installation choice.');
++  PlanComplete := True;
++  WizardForm.Close;
++end;
++
++procedure CancelButtonClick(CurPageID: Integer; var Cancel, Confirm: Boolean);
++begin
++  if PlanComplete then begin Cancel := True; Confirm := False; end;
++end;
++
 +function ShouldSkipPage(PageID: Integer): Boolean;
 +begin
-+  Result := FromScopeLauncher() and (PageID = wpSelectDir);
++  Result := FromScopeLauncher() and ((PageID = wpSelectDir) or
++    ((PageID = wpLicense) and (ExpandConstant('{param:CodexAcceptedLicense|0}') = '1')));
 +end;
 +
  function InitializeSetup(): Boolean;
  var
    RegKey: String;
-@@ -1328,7 +1339,7 @@
+@@ -1328,7 +1399,8 @@
        #define IncompatibleArchRootKey "HKLM64"
      #endif
  
 -    if Result and not WizardSilent() then begin
-+    if Result and not WizardSilent() and not FromScopeLauncher() then begin
++    if Result and not WizardSilent() and not FromScopeLauncher() and
++      (ExpandConstant('{param:CodexPlan|}') = '') then begin
        RegKey := 'SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\' + copy('{#IncompatibleTargetAppId}', 2, 38) + '_is1';
  
        if RegKeyExists({#IncompatibleArchRootKey}, RegKey) then begin
+@@ -1407,6 +1479,7 @@
+ // called before the wizard checks for running application
+ function PrepareToInstall(var NeedsRestart: Boolean): String;
+ begin
++  if PlanFile <> '' then begin Result := 'Scope selection cannot install files.'; Exit; end;
+   if IsNotBackgroundUpdate() then
+     StopTunnelServiceIfNeeded();
+ 

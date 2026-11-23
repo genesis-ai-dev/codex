@@ -4,16 +4,6 @@ using System.IO;
 using System.Linq;
 
 internal static class SetupTests {
-    [System.Runtime.InteropServices.DllImport("user32.dll", CharSet = System.Runtime.InteropServices.CharSet.Unicode)]
-    private static extern IntPtr FindWindow(string klass, string title);
-    [System.Runtime.InteropServices.DllImport("user32.dll")]
-    private static extern bool PostMessage(IntPtr window, uint message, IntPtr wParam, IntPtr lParam);
-    [System.Runtime.InteropServices.DllImport("user32.dll")]
-    private static extern bool PrintWindow(IntPtr window, IntPtr dc, uint flags);
-    [System.Runtime.InteropServices.DllImport("user32.dll")]
-    private static extern bool GetWindowRect(IntPtr window, out Bounds rect);
-    private struct Bounds { public int Left, Top, Right, Bottom; }
-
     private static void Reject(Action action) {
         try { action(); } catch (IOException) { return; }
         throw new Exception("Expected installer to reject an unsafe plan.");
@@ -51,29 +41,6 @@ internal static class SetupTests {
                     string label = Setup.ScopeLabel(inventory, machine);
                     if (label.Contains("currently installed") != inventory.Any(i => i.Machine == machine) ||
                         inventory.Where(i => i.Machine == machine).Any(i => !label.Contains(i.Root))) return 1;
-                }
-            }
-            foreach (int button in new[] { 100, 101, 2 }) {
-                using (var timer = new System.Windows.Forms.Timer { Interval = 300 }) {
-                    timer.Tick += delegate {
-                        var window = FindWindow("#32770", "Setup - Codex");
-                        if (window == IntPtr.Zero) return;
-                        string preview = Environment.GetEnvironmentVariable("CODEX_SETUP_PREVIEW");
-                        if (button == 101 && preview != null) {
-                            Bounds bounds;
-                            GetWindowRect(window, out bounds);
-                            using (var image = new System.Drawing.Bitmap(bounds.Right-bounds.Left, bounds.Bottom-bounds.Top))
-                            using (var graphics = System.Drawing.Graphics.FromImage(image)) {
-                                var dc = graphics.GetHdc();
-                                try { PrintWindow(window, dc, 0); } finally { graphics.ReleaseHdc(dc); }
-                                image.Save(preview, System.Drawing.Imaging.ImageFormat.Png);
-                            }
-                        }
-                        PostMessage(window, 0x0466, (IntPtr)button, IntPtr.Zero); // TDM_CLICK_BUTTON
-                    };
-                    timer.Start();
-                    if (Setup.Choose(new List<Setup.Installation> { system }) !=
-                        (button == 2 ? (bool?)null : button == 101)) return 1;
                 }
             }
             // A double-click must open Inno's license, tasks and ready pages with its own task defaults.
