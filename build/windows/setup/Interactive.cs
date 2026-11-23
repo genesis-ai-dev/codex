@@ -28,7 +28,7 @@ internal static partial class Setup {
         var acl = new PipeSecurity();
         acl.AddAccessRule(new PipeAccessRule(WindowsIdentity.GetCurrent().User, PipeAccessRights.FullControl, AccessControlType.Allow));
         if (allowAdmins) acl.AddAccessRule(new PipeAccessRule(new SecurityIdentifier(WellKnownSidType.BuiltinAdministratorsSid, null),
-            PipeAccessRights.ReadWrite, AccessControlType.Allow));
+            PipeAccessRights.FullControl, AccessControlType.Allow));
         return new NamedPipeServerStream(PipeName(token), PipeDirection.InOut, 1, PipeTransmissionMode.Byte,
             PipeOptions.Asynchronous, 4096, 4096, acl);
     }
@@ -121,6 +121,9 @@ internal static partial class Setup {
         return 0;
     }
 
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern bool GetNamedPipeClientProcessId(Microsoft.Win32.SafeHandles.SafePipeHandle pipe, out uint id);
+
     private sealed class Elevation : IDisposable {
         private readonly NamedPipeServerStream pipe;
         private readonly Process process;
@@ -133,9 +136,13 @@ internal static partial class Setup {
             try {
                 process = Process.Start(new ProcessStartInfo(Assembly.GetExecutingAssembly().Location,
                     "/machine-work " + token + (machine ? " system" : " user")) {
-                    UseShellExecute = true, Verb = "runas", ErrorDialogParentHandle = owner
+                    UseShellExecute = true, Verb = "runas", ErrorDialogParentHandle = owner,
+                    WorkingDirectory = Environment.SystemDirectory
                 });
                 if (!AcceptWhileRunning(pipe, process)) throw new IOException("Administrator setup could not start.");
+                uint peer;
+                if (!GetNamedPipeClientProcessId(pipe.SafePipeHandle, out peer) || peer != process.Id)
+                    throw new IOException("Unexpected administrator setup process.");
                 input = new BinaryReader(pipe);
                 output = new BinaryWriter(pipe);
                 if (input.ReadString() != "ready") throw new IOException("Administrator setup was not ready.");
@@ -175,6 +182,7 @@ internal static partial class Setup {
         try {
             File.WriteAllLines(plan, new[] { "[setup]", "default=" + (DefaultMachineScope(initial) ? "1" : "0"),
                 "systemLabel=" + ScopeLabel(initial,true).Replace("\n"," - "), "userLabel=" + ScopeLabel(initial,false).Replace("\n"," - "),
+                "userDir=" + Destination(initial, false), "systemDir=" + Destination(initial, true),
                 "launcher=" + assembly.Location, "session=" + token }, System.Text.Encoding.Unicode);
             string wizard = ExtractPayload(assembly, false);
             try {
@@ -190,7 +198,10 @@ internal static partial class Setup {
                         string command = input.ReadString(), value = input.ReadString();
                         int code = 1;
                         try {
-                            if (command == "scope" && !complete) {
+                            if (command == "release" && !complete) {
+                                if (admin != null) { admin.Dispose(); admin = null; }
+                                choice = null; code = 0;
+                            } else if (command == "scope" && !complete) {
                                 if (admin != null) { admin.Dispose(); admin = null; }
                                 choice = null;
                                 string[] scope = value.Split(',');
