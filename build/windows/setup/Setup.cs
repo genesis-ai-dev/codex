@@ -118,11 +118,23 @@ internal static class Setup {
         }
     }
 
-    private static void Launch(string exe, string args, bool machine) {
+    private static int RunSetup(string exe, string args, bool machine) {
         using (var p = Process.Start(new ProcessStartInfo(exe, args) { UseShellExecute = machine })) {
             p.WaitForExit();
-            if (p.ExitCode != 0) throw new IOException("Setup stopped (exit " + p.ExitCode + "). Run setup again after resolving the problem.");
+            return p.ExitCode;
         }
+    }
+
+    private static void RequireSuccess(int code) {
+        if (code != 0) throw new IOException("Setup stopped (exit " + code + "). Run setup again after resolving the problem.");
+    }
+
+    private static void Launch(string exe, string args, bool machine) {
+        RequireSuccess(RunSetup(exe, args, machine));
+    }
+
+    internal static string WizardFlags(string destination) {
+        return "/SP- /CodexScopeSetup=1 /NORESTART /RESTARTEXITCODE=3010 /DIR=\"" + destination + "\"";
     }
 
     internal static bool DefaultMachineScope(IEnumerable<Installation> installed) {
@@ -398,8 +410,15 @@ internal static class Setup {
 
         string temp = ExtractPayload(assembly, machine);
         try {
-            string flags = "/SP- /SILENT /NORESTART /RESTARTEXITCODE=3010 /MERGETASKS=\"!runcode,!addtopath\" /DIR=\"" + dest + "\"";
-            Launch(temp, flags, machine);
+            string flags = WizardFlags(dest);
+            int result;
+            try { result = RunSetup(temp, flags, machine); }
+            catch (System.ComponentModel.Win32Exception e) {
+                if (e.NativeErrorCode == 1223) return 2; // Elevation declined.
+                throw;
+            }
+            if (result == 2 || result == 5) return 2; // Inno cancellation, before migration cleanup.
+            RequireSuccess(result);
             VerifyProduct(dest, machine, config["version"]);
             var refreshed = Inventory();
             if (!refreshed.Any(i => i.Id == id && Equal(i.Root, dest))) throw new IOException("New installation was not registered. Previous installations were kept.");
@@ -413,12 +432,11 @@ internal static class Setup {
                     throw new IOException("Windows has not removed the old program in " + old.Root +
                         ". Close running copies and check Windows Installed apps before continuing.");
             }
-            if (obsolete.Any(i => i.Machine == machine)) Launch(temp, flags, machine); // Restore same-hive shortcuts and file associations.
+            if (obsolete.Any(i => i.Machine == machine)) Launch(temp, flags + " /VERYSILENT /MERGETASKS=\"!runcode\"", machine); // Inno reuses the saved task selections.
             VerifyProduct(dest, machine, config["version"]);
             var final = Inventory();
             if (final.Count != 1 || final[0].Id != id || !Equal(final[0].Root, dest))
                 throw new IOException("An additional installation is still registered. Close Codex and run setup again.");
-            MessageBox.Show("Codex Translation Editor is installed in " + dest, title);
             return 0;
         } finally { if (File.Exists(temp)) File.Delete(temp); }
     }
