@@ -78,3 +78,6 @@ jobs:
       - name: Exercise the shipping Inno wizard up to Ready to Install
         shell: powershell
         run: ./build/windows/setup/staging/hosted-wizard.ps1 -Package (Get-Item assets/CodexInstall-*.exe).FullName
+      - name: Verify approved machine operations on the disposable VM
+        shell: powershell
+        run: ./build/windows/setup/staging/test-machine-worker.ps1 -Package (Get-Item assets/CodexInstall-*.exe).FullName
