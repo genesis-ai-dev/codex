@@ -13,7 +13,7 @@ using System.Web.Script.Serialization;
 using System.Windows.Forms;
 using Microsoft.Win32;
 
-internal static class Setup {
+internal static partial class Setup {
     internal sealed class Installation {
         internal string Id, Root, Uninstaller;
         internal bool Machine;
@@ -86,9 +86,9 @@ internal static class Setup {
             throw new IOException("Could not verify the Codex Translation Editor installation in " + root);
     }
 
-    private static List<Installation> Inventory() {
+    private static List<Installation> Inventory(bool machineOnly = false) {
         var found = new List<Installation>();
-        foreach (bool machine in new[] { false, true }) {
+        foreach (bool machine in machineOnly ? new[] { true } : new[] { false, true }) {
             foreach (RegistryView view in Environment.Is64BitOperatingSystem ? new[] { RegistryView.Registry64, RegistryView.Registry32 } : new[] { RegistryView.Registry32 }) {
                 using (var hive = RegistryKey.OpenBaseKey(machine ? RegistryHive.LocalMachine : RegistryHive.CurrentUser, view)) {
                     using (var uninstall = hive.OpenSubKey(Uninstall.TrimEnd('\\'))) {
@@ -158,26 +158,6 @@ internal static class Setup {
 
     private static string ScopeId(bool machine) {
         return config["win32" + config["arch"] + (machine ? "AppId" : "UserAppId")].Substring(1);
-    }
-
-    private static bool? Plan(Assembly assembly, List<Installation> installed) {
-        string plan = Path.GetTempFileName();
-        try {
-            var lines = new List<string> { "[setup]", "default=" + (DefaultMachineScope(installed) ? "1" : "0") };
-            foreach (bool machine in new[] { false, true }) {
-                string key = machine ? "system" : "user";
-                lines.Add(key + "Label=" + ScopeLabel(installed, machine).Replace("\n", " - "));
-            }
-            File.WriteAllLines(plan, lines, System.Text.Encoding.Unicode);
-            string planner = ExtractPayload(assembly, false);
-            try {
-                int code = RunSetup(planner, "/SP- /CodexPlan=\"" + plan + "\"", false);
-                if (code != 2) { RequireSuccess(code); throw new IOException("Setup did not return an installation plan."); }
-            } finally { File.Delete(planner); }
-            var result = File.ReadAllLines(plan);
-            if (result.Length != 1 || (result[0] != "user" && result[0] != "system")) return null;
-            return result[0] == "system";
-        } finally { File.Delete(plan); }
     }
 
     private static bool TrustedMachineRoot(string path) {
@@ -303,6 +283,11 @@ internal static class Setup {
     [STAThread]
     private static int Main(string[] args) {
         try {
+            if (args.Length >= 3 && args[0] == "/wizard-request") return WizardRequest(args);
+            if (args.Length == 3 && args[0] == "/machine-work") {
+                ReadConfig();
+                return MachineWork(args[1], args[2]);
+            }
             if (args.Length == 0) Application.EnableVisualStyles();
             if (new WindowsPrincipal(WindowsIdentity.GetCurrent()).IsInRole(WindowsBuiltInRole.Administrator))
                 throw new IOException("Start setup from your normal Windows session. Windows will request administrator access for an all-users installation.");
@@ -343,58 +328,20 @@ internal static class Setup {
         } finally { File.Delete(payload); }
     }
 
-    private static int Install(string[] args) {
+    private static void ReadConfig() {
         var assembly = Assembly.GetExecutingAssembly();
         using (var input = new StreamReader(assembly.GetManifestResourceStream("config")))
             config = Json.Deserialize<Dictionary<string,string>>(input.ReadToEnd());
+    }
+
+    private static int Install(string[] args) {
+        ReadConfig();
+        var assembly = Assembly.GetExecutingAssembly();
         uint msi = MsiEnumRelatedProducts("{965370CD-253C-4720-82FC-2E6B02A53808}", 0, 0, new System.Text.StringBuilder(39));
         if (msi != 259) throw new IOException(msi == 0 ? "An MSI installation is registered. Update it with the MSI or remove it through Windows Installed apps before switching installer types." : "Windows Installer could not verify the installed products.");
         var installed = Inventory();
         if (args.Length != 0)
             return UpdateInstalled(args, assembly, installed, config);
-        bool? choice = Plan(assembly, installed);
-        if (!choice.HasValue) return 2;
-        bool machine = choice.Value;
-        string id = ScopeId(machine);
-        installed = Inventory();
-        string dest = Destination(installed, machine);
-        ValidatePlan(installed, id, dest);
-        if (machine && !TrustedMachineRoot(dest)) throw new IOException("All-users setup requires a standard protected Codex program directory.");
-        var obsolete = installed.Where(i => i.Id != id).ToList();
-        if (obsolete.Count > 0 && MessageBox.Show("Install in " + dest + ", then uninstall these copies?\n\n" +
-            String.Join("\n", obsolete.Select(i => i.Root + (i.Machine ? " (all users)" : " (current user)"))),
-            title, MessageBoxButtons.OKCancel, MessageBoxIcon.Question, MessageBoxDefaultButton.Button2) != DialogResult.OK) return 2;
-
-        string temp = ExtractPayload(assembly, machine);
-        try {
-            string flags = WizardFlags(dest) + " /CodexAcceptedLicense=1";
-            int result;
-            try { result = RunSetup(temp, flags, machine); }
-            catch (System.ComponentModel.Win32Exception e) {
-                if (e.NativeErrorCode == 1223) return 2; // Elevation declined.
-                throw;
-            }
-            if (result == 2 || result == 5) return 2; // Inno cancellation, before migration cleanup.
-            RequireSuccess(result);
-            VerifyProduct(dest, machine, config["version"]);
-            var refreshed = Inventory();
-            if (!refreshed.Any(i => i.Id == id && Equal(i.Root, dest))) throw new IOException("New installation was not registered. Previous installations were kept.");
-            foreach (var old in obsolete) {
-                var registered = Inventory().SingleOrDefault(i => i.Id == old.Id && Equal(i.Root, old.Root));
-                if (registered == null) continue;
-                ValidatePlan(Inventory(), id, dest);
-                if (!Equal(old.Uninstaller, registered.Uninstaller)) throw new IOException("Installation changed during setup.");
-                Launch(registered.Uninstaller, "/SILENT /NORESTART", registered.Machine);
-                if (File.Exists(Path.Combine(old.Root, "Codex.exe")))
-                    throw new IOException("Windows has not removed the old program in " + old.Root +
-                        ". Close running copies and check Windows Installed apps before continuing.");
-            }
-            if (obsolete.Any(i => i.Machine == machine)) Launch(temp, flags + " /VERYSILENT /MERGETASKS=\"!runcode\"", machine); // Inno reuses the saved task selections.
-            VerifyProduct(dest, machine, config["version"]);
-            var final = Inventory();
-            if (final.Count != 1 || final[0].Id != id || !Equal(final[0].Root, dest))
-                throw new IOException("An additional installation is still registered. Close Codex and run setup again.");
-            return 0;
-        } finally { if (File.Exists(temp)) File.Delete(temp); }
+        return Interactive(assembly, installed);
     }
 }

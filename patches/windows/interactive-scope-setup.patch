@@ -1,14 +1,31 @@
 diff --git a/build/win32/code.iss b/build/win32/code.iss
 --- a/build/win32/code.iss
 +++ b/build/win32/code.iss
-@@ -1305,6 +1305,56 @@
+@@ -19,7 +19,7 @@
+ Compression=lzma
+ SolidCompression=yes
+ AppMutex={code:GetAppMutex}
+-SetupMutex={#AppMutex}setup
++SetupMutex={code:ScopeSetupMutex}
+ WizardImageFile="{#RepoDir}\resources\win32\inno-big-100.bmp,{#RepoDir}\resources\win32\inno-big-125.bmp,{#RepoDir}\resources\win32\inno-big-150.bmp,{#RepoDir}\resources\win32\inno-big-175.bmp,{#RepoDir}\resources\win32\inno-big-200.bmp,{#RepoDir}\resources\win32\inno-big-225.bmp,{#RepoDir}\resources\win32\inno-big-250.bmp"
+ WizardSmallImageFile="{#RepoDir}\resources\win32\inno-small-100.bmp,{#RepoDir}\resources\win32\inno-small-125.bmp,{#RepoDir}\resources\win32\inno-small-150.bmp,{#RepoDir}\resources\win32\inno-small-175.bmp,{#RepoDir}\resources\win32\inno-small-200.bmp,{#RepoDir}\resources\win32\inno-small-225.bmp,{#RepoDir}\resources\win32\inno-small-250.bmp"
+ SetupIconFile={#RepoDir}\resources\win32\code.ico
+@@ -1305,6 +1305,99 @@
  end;
  
  // Don't allow installing conflicting architectures
 +var
-+  PlanFile: String;
++  PlanFile, Launcher, Session: String;
 +  ScopePage: TInputOptionWizardPage;
 +  PlanComplete: Boolean;
++  Progress: TOutputMarqueeProgressWizardPage;
++  RunAfter: TNewCheckBox;
++
++function ScopeSetupMutex(Value: String): String;
++begin
++  if ExpandConstant('{param:CodexPlan|}') <> '' then Result := '{#AppMutex}wizard'
++  else Result := '{#AppMutex}setup';
++end;
 +
 +function FromScopeLauncher(): Boolean;
 +begin
@@ -20,28 +37,63 @@ diff --git a/build/win32/code.iss b/build/win32/code.iss
 +#if "user" == InstallTarget
 +  PlanFile := ExpandConstant('{param:CodexPlan|}');
 +  if PlanFile <> '' then begin
++    if IsAdmin then RaiseException('Start Codex Setup from your normal Windows session.');
++    Launcher := GetIniString('setup', 'launcher', '', PlanFile);
++    Session := GetIniString('setup', 'session', '', PlanFile);
 +    ScopePage := CreateInputOptionPage(wpLicense, 'Select Installation Scope',
 +      'Who should Codex be installed for?', 'Select an installation scope. All Users requires administrator access.', True, False);
 +    ScopePage.Add(GetIniString('setup', 'userLabel', 'Current User', PlanFile));
 +    ScopePage.Add(GetIniString('setup', 'systemLabel', 'All Users', PlanFile));
 +    ScopePage.SelectedValueIndex := GetIniInt('setup', 'default', 0, 0, 1, PlanFile);
++    Progress := CreateOutputMarqueeProgressPage('Installing Codex', 'Please wait while Setup installs Codex.');
 +  end;
 +#endif
 +end;
 +
++function Request(Command, Value: String): Boolean;
++var Status: Integer;
++begin
++  Result := Exec(Launcher, '/wizard-request ' + Session + ' ' + Command + ' "' + Value + '"',
++    '', SW_HIDE, ewWaitUntilTerminated, Status) and (Status = 0);
++end;
++
 +function NextButtonClick(CurPageID: Integer): Boolean;
-+var Lines: TArrayOfString;
++var Scope: String;
 +begin
 +  Result := True;
 +  if PlanFile = '' then Exit;
-+  if CurPageID <> ScopePage.ID then Exit;
-+  Result := False;
-+  SetArrayLength(Lines, 1);
-+  if ScopePage.SelectedValueIndex = 1 then Lines[0] := 'system' else Lines[0] := 'user';
-+  if not SaveStringsToUTF8File(PlanFile, Lines, False) then
-+    RaiseException('Could not save the installation choice.');
-+  PlanComplete := True;
-+  WizardForm.Close;
++  if CurPageID = ScopePage.ID then begin
++    if ScopePage.SelectedValueIndex = 1 then Scope := 'system' else Scope := 'user';
++    Result := Request('scope', Scope + ',' + IntToStr(WizardForm.Handle));
++  end else if CurPageID = wpReady then begin
++    Result := False;
++    if PlanComplete then begin
++      if RunAfter.Checked then Request('launch', '');
++      WizardForm.Close;
++      Exit;
++    end;
++    Progress.Show;
++    try
++      Progress.Animate;
++      PlanComplete := Request('install', WizardSelectedTasks(False));
++    finally
++      Progress.Hide;
++    end;
++    if PlanComplete then begin
++      WizardForm.PageNameLabel.Caption := 'Completing the Codex Setup Wizard';
++      WizardForm.PageDescriptionLabel.Caption := 'Codex has been installed on your computer.';
++      WizardForm.ReadyLabel.Caption := 'Click Finish to exit Setup.';
++      WizardForm.ReadyMemo.Hide;
++      RunAfter := TNewCheckBox.Create(WizardForm);
++      RunAfter.Parent := WizardForm.ReadyMemo.Parent;
++      RunAfter.SetBounds(WizardForm.ReadyMemo.Left, WizardForm.ReadyMemo.Top, WizardForm.ReadyMemo.Width, ScaleY(24));
++      RunAfter.Caption := 'Launch Codex';
++      RunAfter.Checked := True;
++      WizardForm.BackButton.Hide;
++      WizardForm.CancelButton.Hide;
++      WizardForm.NextButton.Caption := SetupMessage(msgButtonFinish);
++    end;
++  end;
 +end;
 +
 +procedure CancelButtonClick(CurPageID: Integer; var Cancel, Confirm: Boolean);
@@ -51,14 +103,14 @@ diff --git a/build/win32/code.iss b/build/win32/code.iss
 +
 +function ShouldSkipPage(PageID: Integer): Boolean;
 +begin
-+  Result := FromScopeLauncher() and ((PageID = wpSelectDir) or
-+    ((PageID = wpLicense) and (ExpandConstant('{param:CodexAcceptedLicense|0}') = '1')));
++  Result := ((FromScopeLauncher() or (PlanFile <> '')) and (PageID = wpSelectDir)) or
++    ((PlanFile <> '') and (PageID = wpSelectProgramGroup));
 +end;
 +
  function InitializeSetup(): Boolean;
  var
    RegKey: String;
-@@ -1328,7 +1378,8 @@
+@@ -1328,7 +1421,8 @@
        #define IncompatibleArchRootKey "HKLM64"
      #endif
  
@@ -68,11 +120,11 @@ diff --git a/build/win32/code.iss b/build/win32/code.iss
        RegKey := 'SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\' + copy('{#IncompatibleTargetAppId}', 2, 38) + '_is1';
  
        if RegKeyExists({#IncompatibleArchRootKey}, RegKey) then begin
-@@ -1407,6 +1458,7 @@
+@@ -1407,6 +1501,7 @@
  // called before the wizard checks for running application
  function PrepareToInstall(var NeedsRestart: Boolean): String;
  begin
-+  if PlanFile <> '' then begin Result := 'Scope selection cannot install files.'; Exit; end;
++  if PlanFile <> '' then begin Result := 'The wizard cannot install a second copy.'; Exit; end;
    if IsNotBackgroundUpdate() then
      StopTunnelServiceIfNeeded();
  
