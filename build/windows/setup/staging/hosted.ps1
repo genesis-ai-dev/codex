@@ -3,6 +3,7 @@ $ErrorActionPreference = 'Stop'
 if ($env:GITHUB_ACTIONS -ne 'true' -or $env:RUNNER_ENVIRONMENT -ne 'github-hosted') { throw 'Disposable GitHub-hosted runner required' }
 $root = Join-Path $env:PUBLIC ('CodexStage-' + [Guid]::NewGuid())
 & "$PSScriptRoot\prepare.ps1" $root
+& "$PSScriptRoot\test-wizard.ps1" -Package "$root\1.108.12734\CodexInstall-x64-1.108.12734.exe"
 $offer = Join-Path $root 'offer'
 Set-Content $offer 1.108.12734 -Encoding Ascii
 $server = Start-Process python -ArgumentList "-u `"$PSScriptRoot\serve.py`" `"$root`"" -PassThru -RedirectStandardError "$root\feed.log"
