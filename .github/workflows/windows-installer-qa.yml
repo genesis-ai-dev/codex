@@ -1,4 +1,4 @@
-name: Verify packaged Windows installer
+name: Package Windows scope installer for QA
 on:
   push:
     branches: [codex/windows-scope-installer-qa]
@@ -6,13 +6,8 @@ permissions:
   contents: read
   actions: read
 jobs:
-  test:
-    strategy:
-      fail-fast: false
-      matrix:
-        script: [hosted-wizard, test-machine-worker]
+  bundle:
     runs-on: windows-2022
-    timeout-minutes: 12
     steps:
       - uses: actions/checkout@v4
         with:
@@ -22,6 +17,40 @@ jobs:
           name: Codex-scope-installer-x64
           run-id: 45267259531
           github-token: ${{ github.token }}
-          path: assets
-      - shell: powershell
-        run: ./build/windows/setup/staging/${{ matrix.script }}.ps1 -Package (Get-Item assets/CodexInstall-*.exe).FullName
+          path: previous
+      - name: Rebundle verified unchanged Inno payloads with the updated launcher
+        shell: powershell
+        run: |
+          $package = (Get-Item previous/CodexInstall-*.exe).FullName
+          if ((Get-FileHash $package).Hash -ne ((Get-Content previous/installer.sha256) -split ' ')[0]) { throw 'Unexpected setup hash' }
+          $a = [Reflection.Assembly]::LoadFile($package)
+          $reader = New-Object IO.StreamReader($a.GetManifestResourceStream('config'))
+          $config = $reader.ReadToEnd() | ConvertFrom-Json
+          $reader.Dispose()
+          $config | Add-Member -NotePropertyName win32AppUserModelId -NotePropertyValue 'Codex.Codex'
+          $config | ConvertTo-Json | Set-Content previous/product.json -Encoding UTF8
+          $assets = (New-Item -ItemType Directory assets).FullName
+          $v = $config.version
+          $extract = $a.GetType('Setup').GetMethod('ExtractPayload',[Reflection.BindingFlags]'Static,NonPublic')
+          foreach ($machine in $false,$true) {
+            $prefix = if ($machine) { 'CodexSetup' } else { 'CodexUserSetup' }
+            Move-Item ($extract.Invoke($null,@($a,$machine))) "$assets\$prefix-x64-$v.exe"
+          }
+          ./build/windows/setup/bundle.ps1 -Arch x64 -Version $v -ProductPath previous/product.json -Assets $assets
+          $exe = "CodexInstall-x64-$v.exe"
+          "$((Get-FileHash "$assets\$exe").Hash.ToLowerInvariant()) *$exe" | Set-Content "$assets\installer.sha256" -Encoding ascii
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Codex-scope-installer-x64
+          path: |
+            assets/CodexInstall-*.exe
+            assets/installer.sha256
+          retention-days: 7
+          if-no-files-found: error
+      - name: Exercise the shipping Inno wizard up to Ready to Install
+        shell: powershell
+        run: ./build/windows/setup/staging/hosted-wizard.ps1 -Package (Get-Item assets/CodexInstall-*.exe).FullName
+      - name: Verify approved machine operations on the disposable VM
+        if: success() || failure()
+        shell: powershell
+        run: ./build/windows/setup/staging/test-machine-worker.ps1 -Package (Get-Item assets/CodexInstall-*.exe).FullName

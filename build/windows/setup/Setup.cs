@@ -47,7 +47,7 @@ internal static partial class Setup {
     private static string UserPrograms() {
         Guid id = new Guid("5CD7AEE2-2219-4A67-B85D-6C9CE15660CB");
         IntPtr path;
-        Marshal.ThrowExceptionForHR(SHGetKnownFolderPath(ref id, 0, IntPtr.Zero, out path));
+        Marshal.ThrowExceptionForHR(SHGetKnownFolderPath(ref id, 0x4000 /* KF_FLAG_DONT_VERIFY: a fresh account has no Programs directory yet */, IntPtr.Zero, out path));
         try { return Marshal.PtrToStringUni(path); } finally { Marshal.FreeCoTaskMem(path); }
     }
 
