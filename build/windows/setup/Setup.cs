@@ -31,6 +31,19 @@ internal static class Setup {
     [DllImport("shell32.dll")]
     private static extern int SHGetKnownFolderPath(ref Guid id, uint flags, IntPtr token, out IntPtr path);
 
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern uint GetLongPathName(string path, System.Text.StringBuilder buffer, uint size);
+
+    // Node and the CLR can receive different long and DOS short spellings of TEMP.
+    private static string ExistingDirectoryName(string value) {
+        string path = FullDir(value);
+        var buffer = new System.Text.StringBuilder(32768);
+        uint length = GetLongPathName(path, buffer, (uint)buffer.Capacity);
+        if (length == 0 || length >= buffer.Capacity)
+            throw new IOException("Could not resolve the updater directory: " + path);
+        return buffer.ToString();
+    }
+
     private static string UserPrograms() {
         Guid id = new Guid("5CD7AEE2-2219-4A67-B85D-6C9CE15660CB");
         IntPtr path;
@@ -201,7 +214,12 @@ internal static class Setup {
                 throw new IOException("Unsupported silent update argument.");
             }
             string expected = Path.Combine(directory, name);
-            if (!Equal(arg.Substring(prefix.Length), expected)) throw new IOException("Unexpected updater flag location.");
+            string supplied = arg.Substring(prefix.Length);
+            if (supplied.Length > 1 && supplied[0] == '"' && supplied[supplied.Length-1] == '"')
+                supplied = supplied.Substring(1, supplied.Length-2);
+            if (!Equal(Path.GetFileName(supplied), name) ||
+                !Equal(ExistingDirectoryName(Path.GetDirectoryName(supplied)), ExistingDirectoryName(directory)))
+                throw new IOException("Unexpected updater flag location for " + prefix + " Expected " + expected + ", received " + supplied);
             flags.Add(prefix + "\"" + expected + "\"");
         }
         flags.Add("/NORESTART");
@@ -209,11 +227,36 @@ internal static class Setup {
         return String.Join(" ", flags);
     }
 
+    internal static void WritePayload(Assembly assembly, bool machine, Stream output) {
+        using (var shared = assembly.GetManifestResourceStream("user")) {
+            if (!machine) {
+                shared.CopyTo(output);
+                return;
+            }
+            using (var delta = new BinaryReader(assembly.GetManifestResourceStream("systemDelta"))) {
+                var buffer = new byte[65536];
+                while (delta.BaseStream.Position < delta.BaseStream.Length) {
+                    int offset = delta.ReadInt32();
+                    int remaining = delta.ReadInt32();
+                    if (remaining <= 0 || offset < -1) throw new InvalidDataException("Invalid setup payload.");
+                    Stream source = offset == -1 ? delta.BaseStream : shared;
+                    if (offset >= 0) shared.Position = offset;
+                    while (remaining > 0) {
+                        int read = source.Read(buffer, 0, Math.Min(remaining, buffer.Length));
+                        if (read == 0) throw new EndOfStreamException();
+                        output.Write(buffer, 0, read);
+                        remaining -= read;
+                    }
+                }
+            }
+        }
+    }
+
     private static string ExtractPayload(Assembly assembly, bool machine) {
         string path = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N") + ".exe");
         using (var file = new FileStream(path, FileMode.CreateNew, FileAccess.Write)) {
             try {
-                using (var input = assembly.GetManifestResourceStream(machine ? "system" : "user")) input.CopyTo(file);
+                WritePayload(assembly, machine, file);
             } catch {
                 file.Close();
                 File.Delete(path);
@@ -235,9 +278,34 @@ internal static class Setup {
             }
         } catch (Exception e) {
             if (args.Length == 0) MessageBox.Show(e.Message, title, MessageBoxButtons.OK, MessageBoxIcon.Error);
-            else Console.Error.WriteLine(e.Message);
+            else {
+                Console.Error.WriteLine(e.Message);
+                // The updater detaches with stderr discarded. Honour its /log request.
+                if (args.Contains("/log", StringComparer.OrdinalIgnoreCase)) {
+                    try {
+                        string log = Path.Combine(Path.GetTempPath(), "CodexUpdateError-" + Guid.NewGuid().ToString("N") + ".log");
+                        using (var stream = new FileStream(log, FileMode.CreateNew, FileAccess.Write))
+                        using (var writer = new StreamWriter(stream)) writer.WriteLine(e);
+                    } catch (IOException) { }
+                    catch (UnauthorizedAccessException) { }
+                }
+            }
             return 1;
         }
+    }
+
+    internal static int UpdateInstalled(string[] args, Assembly assembly, List<Installation> installed,
+                                        Dictionary<string, string> settings) {
+        string package = assembly.Location;
+        var existing = UpdateTarget(installed, Path.GetDirectoryName(package), settings["arch"],
+            settings["win32" + settings["arch"] + "UserAppId"].Substring(1),
+            settings["win32" + settings["arch"] + "AppId"].Substring(1));
+        var flags = UpdateFlags(args, package, existing.Root);
+        string payload = ExtractPayload(assembly, existing.Machine);
+        try {
+            Launch(payload, flags, existing.Machine);
+            return 0;
+        } finally { File.Delete(payload); }
     }
 
     private static int Install(string[] args) {
@@ -247,18 +315,8 @@ internal static class Setup {
         uint msi = MsiEnumRelatedProducts("{965370CD-253C-4720-82FC-2E6B02A53808}", 0, 0, new System.Text.StringBuilder(39));
         if (msi != 259) throw new IOException(msi == 0 ? "An MSI installation is registered. Update it with the MSI or remove it through Windows Installed apps before switching installer types." : "Windows Installer could not verify the installed products.");
         var installed = Inventory();
-        if (args.Length != 0) {
-            string package = assembly.Location;
-            var existing = UpdateTarget(installed, Path.GetDirectoryName(package), config["arch"],
-                config["win32" + config["arch"] + "UserAppId"].Substring(1),
-                config["win32" + config["arch"] + "AppId"].Substring(1));
-            var flags = UpdateFlags(args, package, existing.Root);
-            string payload = ExtractPayload(assembly, existing.Machine);
-            try {
-                Launch(payload, flags, existing.Machine);
-                return 0;
-            } finally { File.Delete(payload); }
-        }
+        if (args.Length != 0)
+            return UpdateInstalled(args, assembly, installed, config);
         bool? choice = Choose(DefaultMachineScope(installed), installed);
         if (!choice.HasValue) return 2;
         bool machine = choice.Value;

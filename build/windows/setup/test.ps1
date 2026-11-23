@@ -18,21 +18,21 @@ try {
     $productPath = Join-Path $fixture 'product.json'
     $product | ConvertTo-Json | Set-Content -LiteralPath $productPath -Encoding UTF8
     foreach ($arch in 'x64','arm64') {
+        $shared = New-Object byte[] (8MB)
+        (New-Object Random 42).NextBytes($shared)
         foreach ($package in 'CodexSetup','CodexUserSetup') {
-            [IO.File]::WriteAllText((Join-Path $fixture "$package-$arch-1.2.3.exe"), "$package-$arch")
+            $file = [IO.File]::Create((Join-Path $fixture "$package-$arch-1.2.3.exe"))
+            try {
+                $header = [Text.Encoding]::ASCII.GetBytes("$package-$arch")
+                $file.Write($header, 0, $header.Length)
+                $file.Write($shared, 0, $shared.Length)
+                $file.WriteByte($header.Length)
+            } finally { $file.Dispose() }
         }
         & "$PSScriptRoot\bundle.ps1" -Arch $arch -Version 1.2.3 -ProductPath $productPath -Assets $fixture
         $assembly = [Reflection.Assembly]::Load([IO.File]::ReadAllBytes((Join-Path $fixture "CodexInstall-$arch-1.2.3.exe")))
-        foreach ($payload in 'user','system','config') {
-            $reader = New-Object IO.StreamReader($assembly.GetManifestResourceStream($payload))
-            try { $contents = $reader.ReadToEnd() } finally { $reader.Dispose() }
-            if ($payload -eq 'config') {
-                $embedded = $contents | ConvertFrom-Json
-                if ($embedded.arch -ne $arch -or $embedded.version -ne '1.2.3' -or $embedded.win32UserAppId -ne $product.win32UserAppId) { throw 'Wrong bundle configuration' }
-            } else {
-                $expected = if ($payload -eq 'user') { "CodexUserSetup-$arch" } else { "CodexSetup-$arch" }
-                if ($contents -ne $expected) { throw "Wrong $payload package for $arch" }
-            }
-        }
+        $reader = New-Object IO.StreamReader($assembly.GetManifestResourceStream('config'))
+        try { $embedded = $reader.ReadToEnd() | ConvertFrom-Json } finally { $reader.Dispose() }
+        if ($embedded.arch -ne $arch -or $embedded.version -ne '1.2.3' -or $embedded.win32UserAppId -ne $product.win32UserAppId) { throw 'Wrong bundle configuration' }
     }
 } finally { Remove-Item -Recurse -LiteralPath $fixture }

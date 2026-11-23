@@ -20,3 +20,6 @@ jobs:
       - name: Compile and test Windows migration rules
         shell: powershell
         run: ./build/windows/setup/test.ps1
+      - name: Replay consecutive Windows updates for both installed scopes
+        shell: powershell
+        run: ./build/windows/setup/test-update-chain.ps1
