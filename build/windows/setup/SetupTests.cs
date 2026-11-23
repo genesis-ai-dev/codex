@@ -4,6 +4,16 @@ using System.IO;
 using System.Linq;
 
 internal static class SetupTests {
+    [System.Runtime.InteropServices.DllImport("user32.dll", CharSet = System.Runtime.InteropServices.CharSet.Unicode)]
+    private static extern IntPtr FindWindow(string klass, string title);
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    private static extern bool PostMessage(IntPtr window, uint message, IntPtr wParam, IntPtr lParam);
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    private static extern bool PrintWindow(IntPtr window, IntPtr dc, uint flags);
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    private static extern bool GetWindowRect(IntPtr window, out Bounds rect);
+    private struct Bounds { public int Left, Top, Right, Bottom; }
+
     private static void Reject(Action action) {
         try { action(); } catch (IOException) { return; }
         throw new Exception("Expected installer to reject an unsafe plan.");
@@ -35,26 +45,35 @@ internal static class SetupTests {
             var system = new Setup.Installation { Id = "system", Machine = true,
                 Root = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "Codex") };
             var both = new List<Setup.Installation> { system, user };
-            using (var logo = System.Drawing.Image.FromStream(typeof(Setup).Assembly.GetManifestResourceStream("wizardLogo")))
-            using (var heading = new System.Drawing.Font(System.Drawing.SystemFonts.MessageBoxFont, System.Drawing.FontStyle.Bold)) {
-                foreach (var inventory in new[] { new List<Setup.Installation>(), registered,
-                    new List<Setup.Installation> {system}, both }) {
-                    using (var form = Setup.CreateScopePage(inventory, logo, heading)) {
-                        form.Show();
-                        foreach (bool machine in new[] {false, true}) {
-                            var radio = (System.Windows.Forms.RadioButton)form.Controls.Find(machine ? "allUsers" : "currentUser", true).Single();
-                            if (radio.Checked != (machine == Setup.DefaultMachineScope(inventory)) ||
-                                radio.Text != (machine ? "All Users" : "Current User") +
-                                (inventory.Any(i => i.Machine == machine) ? " (currently installed)" : "")) return 1;
-                        }
+            foreach (var inventory in new[] { new List<Setup.Installation>(), registered,
+                new List<Setup.Installation> {system}, both }) {
+                foreach (bool machine in new[] {false, true}) {
+                    string label = Setup.ScopeLabel(inventory, machine);
+                    if (label.Contains("currently installed") != inventory.Any(i => i.Machine == machine) ||
+                        inventory.Where(i => i.Machine == machine).Any(i => !label.Contains(i.Root))) return 1;
+                }
+            }
+            foreach (int button in new[] { 100, 101, 2 }) {
+                using (var timer = new System.Windows.Forms.Timer { Interval = 300 }) {
+                    timer.Tick += delegate {
+                        var window = FindWindow("#32770", "Setup - Codex");
+                        if (window == IntPtr.Zero) return;
                         string preview = Environment.GetEnvironmentVariable("CODEX_SETUP_PREVIEW");
-                        if (preview != null && inventory.Count == 1 && inventory[0].Machine) {
-                            using (var image = new System.Drawing.Bitmap(form.Width, form.Height)) {
-                                form.DrawToBitmap(image, new System.Drawing.Rectangle(0, 0, form.Width, form.Height));
+                        if (button == 101 && preview != null) {
+                            Bounds bounds;
+                            GetWindowRect(window, out bounds);
+                            using (var image = new System.Drawing.Bitmap(bounds.Right-bounds.Left, bounds.Bottom-bounds.Top))
+                            using (var graphics = System.Drawing.Graphics.FromImage(image)) {
+                                var dc = graphics.GetHdc();
+                                try { PrintWindow(window, dc, 0); } finally { graphics.ReleaseHdc(dc); }
                                 image.Save(preview, System.Drawing.Imaging.ImageFormat.Png);
                             }
                         }
-                    }
+                        PostMessage(window, 0x0466, (IntPtr)button, IntPtr.Zero); // TDM_CLICK_BUTTON
+                    };
+                    timer.Start();
+                    if (Setup.Choose(new List<Setup.Installation> { system }) !=
+                        (button == 2 ? (bool?)null : button == 101)) return 1;
                 }
             }
             // A double-click must open Inno's license, tasks and ready pages with its own task defaults.
