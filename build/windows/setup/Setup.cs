@@ -132,7 +132,7 @@ internal static class Setup {
     private static void AddScope(TableLayoutPanel body, bool machine, bool selected, List<Installation> installed) {
         var paths = installed.Where(i => i.Machine == machine).Select(i => i.Root)
             .Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
-        string name = machine ? "Anyone who uses this computer (all users)" : "Only for me (" + Environment.UserName + ")";
+        string name = machine ? "All Users" : "Current User";
         var option = new RadioButton { Name = machine ? "allUsers" : "currentUser", AutoSize = true,
             Text = name + (paths.Length == 0 ? "" : " (currently installed)"),
             Checked = selected, UseMnemonic = false, Margin = new Padding(0, 12, 0, 2) };
@@ -170,8 +170,8 @@ internal static class Setup {
         layout.Controls.Add(new Panel { Height = 1, BackColor = System.Drawing.SystemColors.ControlDark,
             Dock = DockStyle.Top, Margin = Padding.Empty });
         bool machine = DefaultMachineScope(installed);
-        AddScope(body, true, machine, installed);
         AddScope(body, false, !machine, installed);
+        AddScope(body, true, machine, installed);
         // Keep the options together at the top in a full-height wizard page.
         for (int row = 0; row < body.Controls.Count; row++) body.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         body.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
