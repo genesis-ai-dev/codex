@@ -40,9 +40,9 @@ try {
     foreach ($machine in $false,$true) {
         $original = if ($machine) { $system } else { $user }
         $hash = [Security.Cryptography.SHA256]::Create()
-        $stream = New-Object Security.Cryptography.CryptoStream([IO.Stream]::Null, $hash, [Security.Cryptography.CryptoStreamMode]::Write)
+        $stream = [Security.Cryptography.CryptoStream]::new([IO.Stream]::Null, $hash, [Security.Cryptography.CryptoStreamMode]::Write)
         try {
-            $write.Invoke($null, @($assembly, $machine, $stream))
+            $write.Invoke($null, @($assembly, $machine, $stream.PSObject.BaseObject))
             $stream.FlushFinalBlock()
             if ([BitConverter]::ToString($hash.Hash).Replace('-', '') -ne (Get-FileHash $original).Hash) {
                 throw "Installer reconstruction failed for $original"
