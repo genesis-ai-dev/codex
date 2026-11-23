@@ -1,5 +1,5 @@
 # Exercise the real Inno pages on a fresh Windows runner. Stop on Ready to Install.
-param([Parameter(Mandatory)][string]$Package)
+param([Parameter(Mandatory)][string]$Package, [switch]$PlannedInstall)
 $ErrorActionPreference = 'Stop'
 if ($env:RUNNER_ENVIRONMENT -ne 'github-hosted') { throw 'A disposable hosted runner is required' }
 Add-Type @'
@@ -44,9 +44,46 @@ $payload = $setup.GetMethod('ExtractPayload', $methods).Invoke($null, @($assembl
 $dest = Join-Path $env:TEMP ("CodexWizardTest-" + [guid]::NewGuid())
 $flags = $setup.GetMethod('WizardFlags', $methods).Invoke($null, @($dest.PSObject.BaseObject))
 try {
+    if ($PlannedInstall) {
+        $planner = $setup.GetMethod('ExtractPayload', $methods).Invoke($null, @($assembly, $false))
+        $plan = [IO.Path]::GetTempFileName()
+        try {
+            [IO.File]::WriteAllLines($plan, @('[setup]', 'default=1', "system=$dest", "user=$dest-user"), [Text.Encoding]::Unicode)
+            $child = Start-Process $planner -ArgumentList "/SP- /CodexPlan=`"$plan`" /LANG=english" -PassThru
+            $pages = @('License Agreement','Select Installation Scope','Select Destination Location')
+            foreach ($page in $pages) {
+                $deadline = [DateTime]::UtcNow.AddSeconds(30)
+                do {
+                    Start-Sleep -Milliseconds 250
+                    if ($child.HasExited) { throw "Planner exited before $page" }
+                    $windows = [WizardWindow]::Visible([IntPtr]::Zero)
+                    # A per-user Inno payload warns when launched by the elevated CI account.
+                    foreach ($dialog in $windows | Where-Object { $_.Text -match 'Setup' -and $_.Class -ne 'TWizardForm' }) {
+                        $controls = [WizardWindow]::Visible($dialog.Handle)
+                        if ($controls.Text -match 'Administrator') {
+                            ($controls | Where-Object Text -eq OK | Select-Object -First 1).Click()
+                        }
+                    }
+                    $wizard = $windows | Where-Object Class -eq TWizardForm | Select-Object -First 1
+                    if ($wizard) { $controls = [WizardWindow]::Visible($wizard.Handle) }
+                } until (($wizard -and $controls.Text -contains $page) -or [DateTime]::UtcNow -gt $deadline)
+                if (!$wizard -or $controls.Text -notcontains $page) { throw "Missing $page. Visible: $($controls.Text -join ', ')" }
+                if ($page -eq 'License Agreement') {
+                    ($controls | Where-Object Text -eq 'I accept the agreement' | Select-Object -First 1).Click()
+                }
+                ($controls | Where-Object { $_.Text -match '^Next(?: >)?$' } | Select-Object -First 1).Click()
+            }
+            if (!$child.WaitForExit(15000) -or $child.ExitCode -ne 2 -or
+                ([IO.File]::ReadAllLines($plan) -join '|') -ne "system|$dest") { throw 'Wrong installation plan' }
+            $flags += ' /CodexAcceptedLicense=1'
+        } finally {
+            if ($child -and !$child.HasExited) { & taskkill /PID $child.Id /T /F | Out-Null }
+            Remove-Item -LiteralPath $planner,$plan
+        }
+    }
     $child = Start-Process -FilePath $payload -ArgumentList "$flags /LANG=english" -PassThru
     $deadline = [DateTime]::UtcNow.AddSeconds(90)
-    $license = $false
+    $license = [bool]$PlannedInstall
     $tasks = $false
     do {
         Start-Sleep -Milliseconds 500
@@ -57,6 +94,7 @@ try {
         $labels = $controls.Text
         if ($labels -contains 'Ready to Install') { break }
         if ($labels -contains 'License Agreement') {
+            if ($PlannedInstall) { throw 'Repeated license after handoff' }
             ($controls | Where-Object Text -eq 'I accept the agreement' | Select-Object -First 1).Click()
             $license = $true
         }
