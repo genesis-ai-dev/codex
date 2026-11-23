@@ -44,7 +44,8 @@ internal static class SetupTests {
                         foreach (bool machine in new[] {false, true}) {
                             var radio = (System.Windows.Forms.RadioButton)form.Controls.Find(machine ? "allUsers" : "currentUser", true).Single();
                             if (radio.Checked != (machine == Setup.DefaultMachineScope(inventory)) ||
-                                radio.Text.Contains("currently installed") != inventory.Any(i => i.Machine == machine)) return 1;
+                                radio.Text != (machine ? "All Users" : "Current User") +
+                                (inventory.Any(i => i.Machine == machine) ? " (currently installed)" : "")) return 1;
                         }
                         string preview = Environment.GetEnvironmentVariable("CODEX_SETUP_PREVIEW");
                         if (preview != null && inventory.Count == 1 && inventory[0].Machine) {
