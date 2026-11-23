@@ -48,6 +48,10 @@ if ($PlannedInstall) {
         do {
             Start-Sleep -Milliseconds 200
             $windows = [WizardWindow]::Visible([IntPtr]::Zero)
+            foreach ($dialog in ($windows | Where-Object Text -eq 'Codex Translation Editor Setup')) {
+                $message = [WizardWindow]::Visible($dialog.Handle)
+                throw "Launcher dialog while waiting for $page. $($message.Text -join ', ')"
+            }
             foreach ($window in ($windows | Where-Object Class -eq TWizardForm)) {
                 $controls = [WizardWindow]::Visible($window.Handle)
                 if ($controls.Text -contains $page) {
