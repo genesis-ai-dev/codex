@@ -141,80 +141,62 @@ internal static class Setup {
         return installed.Any(i => i.Machine);
     }
 
-    private static void AddScope(TableLayoutPanel body, bool machine, bool selected, List<Installation> installed) {
+    // TASKDIALOGCONFIG and TASKDIALOG_BUTTON use one-byte packing in commctrl.h.
+    [StructLayout(LayoutKind.Sequential, Pack = 1, CharSet = CharSet.Unicode)]
+    private struct TaskDialogConfig {
+        public uint Size;
+        public IntPtr Parent, Instance;
+        public uint Flags, CommonButtons;
+        public string Title;
+        public IntPtr Icon;
+        public string Instruction, Content;
+        public uint ButtonCount;
+        public IntPtr Buttons;
+        public int DefaultButton;
+        public uint RadioCount;
+        public IntPtr Radios;
+        public int DefaultRadio;
+        public IntPtr Verification, Expanded, ExpandedLabel, CollapsedLabel, FooterIcon, Footer, Callback, Data;
+        public uint Width;
+    }
+
+    [StructLayout(LayoutKind.Sequential, Pack = 1)]
+    private struct ScopeButton { public int Id; public IntPtr Label; }
+
+    [DllImport("comctl32.dll", ExactSpelling = true)]
+    private static extern int TaskDialogIndirect(ref TaskDialogConfig config, out int button, IntPtr radio, IntPtr verified);
+
+    internal static string ScopeLabel(List<Installation> installed, bool machine) {
         var paths = installed.Where(i => i.Machine == machine).Select(i => i.Root)
             .Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
         string name = machine ? "All Users" : "Current User";
-        var option = new RadioButton { Name = machine ? "allUsers" : "currentUser", AutoSize = true,
-            Text = name + (paths.Length == 0 ? "" : " (currently installed)"),
-            Checked = selected, UseMnemonic = false, Margin = new Padding(0, 12, 0, 2) };
-        body.Controls.Add(option);
-        if (paths.Length > 0) {
-            body.Controls.Add(new Label { Text = String.Join(Environment.NewLine, paths), UseMnemonic = false,
-                MaximumSize = new System.Drawing.Size(480, 0), AutoSize = true, Margin = new Padding(19, 0, 0, 4) });
-        }
+        return paths.Length == 0 ? name : name + " (currently installed)\n" + String.Join("\n", paths);
     }
 
-    internal static Form CreateScopePage(List<Installation> installed, System.Drawing.Image logo, System.Drawing.Font heading) {
-        var form = new Form { Text = "Setup - Codex", Font = System.Drawing.SystemFonts.MessageBoxFont,
-            AutoScaleDimensions = new System.Drawing.SizeF(96, 96), AutoScaleMode = AutoScaleMode.Dpi,
-            AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink, FormBorderStyle = FormBorderStyle.FixedDialog,
-            StartPosition = FormStartPosition.CenterScreen, MaximizeBox = false, MinimizeBox = false };
-        var layout = new TableLayoutPanel { AutoSize = true, ColumnCount = 1, Dock = DockStyle.Fill,
-            MinimumSize = new System.Drawing.Size(580, 0), BackColor = System.Drawing.SystemColors.Window,
-            ForeColor = System.Drawing.SystemColors.WindowText };
-        var header = new TableLayoutPanel { AutoSize = true, ColumnCount = 2, RowCount = 2, Dock = DockStyle.Fill,
-            Padding = new Padding(20, 8, 10, 8), Margin = Padding.Empty };
-        header.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-        header.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
-        header.Controls.Add(new Label { Text = "Choose Installation Options", Font = heading, AutoSize = true }, 0, 0);
-        header.Controls.Add(new Label { Text = "Who should Codex Translation Editor be installed for?",
-            AutoSize = true, Margin = new Padding(18, 0, 0, 0) }, 0, 1);
-        var picture = new PictureBox { Image = logo, SizeMode = PictureBoxSizeMode.Zoom, Width = 48, Height = 48,
-            Margin = Padding.Empty };
-        header.Controls.Add(picture, 1, 0);
-        header.SetRowSpan(picture, 2);
-        layout.Controls.Add(header);
-
-        var body = new TableLayoutPanel { AutoSize = true, ColumnCount = 1, Dock = DockStyle.Fill,
-            BackColor = System.Drawing.SystemColors.Control, ForeColor = System.Drawing.SystemColors.ControlText,
-            MinimumSize = new System.Drawing.Size(0, 280), Padding = new Padding(36, 20, 26, 18), Margin = Padding.Empty };
-        layout.Controls.Add(new Panel { Height = 1, BackColor = System.Drawing.SystemColors.ControlDark,
-            Dock = DockStyle.Top, Margin = Padding.Empty });
-        bool machine = DefaultMachineScope(installed);
-        AddScope(body, false, !machine, installed);
-        AddScope(body, true, machine, installed);
-        // Keep the options together at the top in a full-height wizard page.
-        for (int row = 0; row < body.Controls.Count; row++) body.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-        body.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
-        body.Controls.Add(new Label { Text = "Installing for all users requires administrator access.",
-            AutoSize = true, Anchor = AnchorStyles.Bottom | AnchorStyles.Left, Margin = new Padding(0, 16, 0, 2) });
-        body.RowCount = body.RowStyles.Count;
-        layout.Controls.Add(body);
-        layout.Controls.Add(new Panel { Height = 1, BackColor = System.Drawing.SystemColors.ControlDark,
-            Dock = DockStyle.Top, Margin = Padding.Empty });
-        var actions = new FlowLayoutPanel { AutoSize = true, Dock = DockStyle.Fill, Margin = Padding.Empty,
-            Padding = new Padding(8), FlowDirection = FlowDirection.RightToLeft, BackColor = System.Drawing.SystemColors.Control };
-        var next = new Button { Text = "Next", DialogResult = DialogResult.OK, AutoSize = true };
-        var cancel = new Button { Text = "Cancel", DialogResult = DialogResult.Cancel, AutoSize = true };
-        actions.Controls.Add(cancel);
-        actions.Controls.Add(next);
-        form.AcceptButton = next;
-        form.CancelButton = cancel;
-        layout.Controls.Add(actions);
-        form.Controls.Add(layout);
-        return form;
-    }
-
-    private static bool? Choose(List<Installation> installed) {
-        using (var stream = Assembly.GetExecutingAssembly().GetManifestResourceStream("wizardLogo"))
-        using (var logo = System.Drawing.Image.FromStream(stream))
-        using (var heading = new System.Drawing.Font(System.Drawing.SystemFonts.MessageBoxFont, System.Drawing.FontStyle.Bold))
-        using (var icon = System.Drawing.Icon.ExtractAssociatedIcon(Application.ExecutablePath))
-        using (var form = CreateScopePage(installed, logo, heading)) {
-            form.Icon = icon;
-            return form.ShowDialog() == DialogResult.OK ?
-                (bool?)((RadioButton)form.Controls.Find("allUsers", true).Single()).Checked : null;
+    internal static bool? Choose(List<Installation> installed) {
+        const int currentUser = 100, allUsers = 101;
+        var buttons = new ScopeButton[2];
+        var pinned = GCHandle.Alloc(buttons, GCHandleType.Pinned);
+        try {
+            buttons[0] = new ScopeButton { Id = currentUser, Label = Marshal.StringToHGlobalUni(ScopeLabel(installed, false)) };
+            buttons[1] = new ScopeButton { Id = allUsers, Label = Marshal.StringToHGlobalUni(ScopeLabel(installed, true)) };
+            using (var icon = System.Drawing.Icon.ExtractAssociatedIcon(Application.ExecutablePath)) {
+                var dialog = new TaskDialogConfig {
+                    Size = (uint)Marshal.SizeOf(typeof(TaskDialogConfig)), Title = "Setup - Codex",
+                    Flags = 0x10 | 0x2 | 0x8, // command links, HICON, allow cancellation
+                    CommonButtons = 0x8, // Cancel
+                    Instruction = "Who should Codex be installed for?", Icon = icon.Handle,
+                    Content = "Installing for all users requires administrator access.",
+                    Buttons = pinned.AddrOfPinnedObject(), ButtonCount = 2,
+                    DefaultButton = DefaultMachineScope(installed) ? allUsers : currentUser
+                };
+                int result;
+                Marshal.ThrowExceptionForHR(TaskDialogIndirect(ref dialog, out result, IntPtr.Zero, IntPtr.Zero));
+                return result == allUsers ? true : result == currentUser ? (bool?)false : null;
+            }
+        } finally {
+            foreach (var button in buttons) Marshal.FreeHGlobal(button.Label);
+            pinned.Free();
         }
     }
 
