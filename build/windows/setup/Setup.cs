@@ -160,16 +160,13 @@ internal static class Setup {
         return config["win32" + config["arch"] + (machine ? "AppId" : "UserAppId")].Substring(1);
     }
 
-    private static bool? Plan(Assembly assembly, List<Installation> installed, out string destination) {
-        destination = null;
+    private static bool? Plan(Assembly assembly, List<Installation> installed) {
         string plan = Path.GetTempFileName();
         try {
             var lines = new List<string> { "[setup]", "default=" + (DefaultMachineScope(installed) ? "1" : "0") };
             foreach (bool machine in new[] { false, true }) {
                 string key = machine ? "system" : "user";
-                lines.Add(key + "=" + Destination(installed, machine));
                 lines.Add(key + "Label=" + ScopeLabel(installed, machine).Replace("\n", " - "));
-                lines.Add(key + "Fixed=" + (machine || installed.Any(i => i.Id == ScopeId(machine)) ? "1" : "0"));
             }
             File.WriteAllLines(plan, lines, System.Text.Encoding.Unicode);
             string planner = ExtractPayload(assembly, false);
@@ -178,8 +175,7 @@ internal static class Setup {
                 if (code != 2) { RequireSuccess(code); throw new IOException("Setup did not return an installation plan."); }
             } finally { File.Delete(planner); }
             var result = File.ReadAllLines(plan);
-            if (result.Length != 2 || (result[0] != "user" && result[0] != "system")) return null;
-            destination = FullDir(result[1]);
+            if (result.Length != 1 || (result[0] != "user" && result[0] != "system")) return null;
             return result[0] == "system";
         } finally { File.Delete(plan); }
     }
@@ -356,14 +352,12 @@ internal static class Setup {
         var installed = Inventory();
         if (args.Length != 0)
             return UpdateInstalled(args, assembly, installed, config);
-        string dest;
-        bool? choice = Plan(assembly, installed, out dest);
+        bool? choice = Plan(assembly, installed);
         if (!choice.HasValue) return 2;
         bool machine = choice.Value;
         string id = ScopeId(machine);
         installed = Inventory();
-        if (installed.Any(i => i.Id == id && !Equal(i.Root, dest)))
-            throw new IOException("The existing installation folder changed. Run setup again.");
+        string dest = Destination(installed, machine);
         ValidatePlan(installed, id, dest);
         if (machine && !TrustedMachineRoot(dest)) throw new IOException("All-users setup requires a standard protected Codex program directory.");
         var obsolete = installed.Where(i => i.Id != id).ToList();
