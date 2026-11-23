@@ -130,18 +130,54 @@ internal static class Setup {
     }
 
     private static bool? Choose(bool machine, List<Installation> installed) {
-        using (var form = new Form { Text = title, Width = 540, Height = 260, StartPosition = FormStartPosition.CenterScreen,
-                                    FormBorderStyle = FormBorderStyle.FixedDialog, MaximizeBox = false, MinimizeBox = false, AutoScaleMode = AutoScaleMode.Dpi }) {
-            var panel = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = FlowDirection.TopDown, WrapContents = false, Padding = new Padding(12) };
-            panel.Controls.Add(new Label { AutoSize = true, Text = "Install Codex Translation Editor for" });
-            var user = new RadioButton { Text = "Current user", AutoSize = true, Checked = !machine };
-            var all = new RadioButton { Text = "All users on this PC", AutoSize = true, Checked = machine };
-            panel.Controls.Add(user); panel.Controls.Add(all);
-            panel.Controls.Add(new Label { AutoSize = true, MaximumSize = new System.Drawing.Size(480, 0),
-                Text = installed.Count == 0 ? "A new installation will be created." :
-                    "Existing installation folders:\n" + String.Join("\n", installed.Select(i => i.Root)) });
-            var next = new Button { Text = "Continue", AutoSize = true, DialogResult = DialogResult.OK };
-            panel.Controls.Add(next); form.AcceptButton = next; form.Controls.Add(panel);
+        using (var form = new Form())
+        using (var icon = System.Drawing.Icon.ExtractAssociatedIcon(Application.ExecutablePath))
+        using (var heading = new System.Drawing.Font(System.Drawing.SystemFonts.MessageBoxFont.FontFamily, 14))
+        using (var logo = icon.ToBitmap()) {
+            form.Text = title;
+            form.Icon = icon;
+            form.Font = System.Drawing.SystemFonts.MessageBoxFont;
+            form.AutoScaleDimensions = new System.Drawing.SizeF(96, 96);
+            form.AutoScaleMode = AutoScaleMode.Dpi;
+            form.AutoSize = true;
+            form.AutoSizeMode = AutoSizeMode.GrowAndShrink;
+            form.FormBorderStyle = FormBorderStyle.FixedDialog;
+            form.StartPosition = FormStartPosition.CenterScreen;
+            form.MaximizeBox = form.MinimizeBox = false;
+
+            var layout = new TableLayoutPanel { AutoSize = true, ColumnCount = 1, Dock = DockStyle.Fill,
+                BackColor = System.Drawing.SystemColors.Window, ForeColor = System.Drawing.SystemColors.WindowText };
+            var body = new TableLayoutPanel { AutoSize = true, ColumnCount = 1, Padding = new Padding(20),
+                Margin = Padding.Empty, Dock = DockStyle.Fill };
+            var header = new FlowLayoutPanel { AutoSize = true, WrapContents = false, Margin = new Padding(0, 0, 0, 12) };
+            header.Controls.Add(new PictureBox { Image = logo, SizeMode = PictureBoxSizeMode.Zoom,
+                Width = 32, Height = 32, Margin = new Padding(0, 0, 10, 0) });
+            header.Controls.Add(new Label { Text = "Who can use Codex Translation Editor?", AutoSize = true,
+                Anchor = AnchorStyles.Left, Font = heading });
+            body.Controls.Add(header);
+            var user = new RadioButton { Text = "Only me", AutoSize = true, Checked = !machine };
+            var all = new RadioButton { Text = "Everyone on this PC", AutoSize = true, Checked = machine };
+            body.Controls.Add(user);
+            body.Controls.Add(all);
+            if (installed.Count > 0) {
+                body.Controls.Add(new Label { Text = installed.Count == 1 ? "Existing installation" : "Existing installations",
+                    AutoSize = true, Margin = new Padding(3, 14, 3, 0) });
+                body.Controls.Add(new Label { Text = String.Join(Environment.NewLine, installed.Select(i => i.Root)),
+                    MaximumSize = new System.Drawing.Size(420, 0), AutoSize = true, UseMnemonic = false });
+            }
+
+            var actions = new FlowLayoutPanel { AutoSize = true, Dock = DockStyle.Fill, Margin = Padding.Empty,
+                Padding = new Padding(10, 6, 10, 6), FlowDirection = FlowDirection.RightToLeft,
+                BackColor = System.Drawing.SystemColors.Control };
+            var next = new Button { Text = "Continue", DialogResult = DialogResult.OK, AutoSize = true };
+            var cancel = new Button { Text = "Cancel", DialogResult = DialogResult.Cancel, AutoSize = true };
+            actions.Controls.Add(cancel);
+            actions.Controls.Add(next);
+            form.AcceptButton = next;
+            form.CancelButton = cancel;
+            layout.Controls.Add(body);
+            layout.Controls.Add(actions);
+            form.Controls.Add(layout);
             return form.ShowDialog() == DialogResult.OK ? (bool?)all.Checked : null;
         }
     }
@@ -269,6 +305,7 @@ internal static class Setup {
     [STAThread]
     private static int Main(string[] args) {
         try {
+            if (args.Length == 0) Application.EnableVisualStyles();
             if (new WindowsPrincipal(WindowsIdentity.GetCurrent()).IsInRole(WindowsBuiltInRole.Administrator))
                 throw new IOException("Start setup from your normal Windows session. Windows will request administrator access for an all-users installation.");
             using (var mutex = new Mutex(false, @"Global\CodexTranslationEditorScopeSetup")) {

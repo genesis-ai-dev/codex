@@ -18,7 +18,7 @@ try {
     $productPath = Join-Path $fixture 'product.json'
     $product | ConvertTo-Json | Set-Content -LiteralPath $productPath -Encoding UTF8
     foreach ($arch in 'x64','arm64') {
-        $shared = New-Object byte[] (8MB)
+        $shared = New-Object byte[] (20MB)
         (New-Object Random 42).NextBytes($shared)
         foreach ($package in 'CodexSetup','CodexUserSetup') {
             $file = [IO.File]::Create((Join-Path $fixture "$package-$arch-1.2.3.exe"))
