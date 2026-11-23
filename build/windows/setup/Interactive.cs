@@ -231,7 +231,7 @@ internal static partial class Setup {
                                 code = 0;
                             }
                         } catch (System.ComponentModel.Win32Exception e) {
-                            if (e.NativeErrorCode == 1223) code = 2; else MessageBox.Show(e.Message, title);
+                            if (e.NativeErrorCode == 1223 || e.NativeErrorCode == 5) code = 2; else MessageBox.Show(e.Message, title);
                         } catch (Exception e) { MessageBox.Show(e.Message, title); }
                         output.Write(code); output.Flush();
                         input.ReadBoolean(); pipe.Disconnect();
