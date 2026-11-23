@@ -48,9 +48,9 @@ try {
         $planner = $setup.GetMethod('ExtractPayload', $methods).Invoke($null, @($assembly, $false))
         $plan = [IO.Path]::GetTempFileName()
         try {
-            [IO.File]::WriteAllLines($plan, @('[setup]', 'default=1', "system=$dest", "user=$dest-user"), [Text.Encoding]::Unicode)
+            [IO.File]::WriteAllLines($plan, @('[setup]', 'default=1'), [Text.Encoding]::Unicode)
             $child = Start-Process $planner -ArgumentList "/SP- /CodexPlan=`"$plan`" /LANG=english" -PassThru
-            $pages = @('License Agreement','Select Installation Scope','Select Destination Location')
+            $pages = @('License Agreement','Select Installation Scope')
             foreach ($page in $pages) {
                 $deadline = [DateTime]::UtcNow.AddSeconds(30)
                 do {
@@ -74,7 +74,7 @@ try {
                 ($controls | Where-Object { $_.Text -match '^Next(?: >)?$' } | Select-Object -First 1).Click()
             }
             if (!$child.WaitForExit(15000) -or $child.ExitCode -ne 2 -or
-                ([IO.File]::ReadAllLines($plan) -join '|') -ne "system|$dest") { throw 'Wrong installation plan' }
+                ([IO.File]::ReadAllLines($plan) -join '|') -ne 'system') { throw 'Wrong installation plan' }
             $flags += ' /CodexAcceptedLicense=1'
         } finally {
             if ($child -and !$child.HasExited) { & taskkill /PID $child.Id /T /F | Out-Null }
@@ -92,6 +92,7 @@ try {
         if (!$wizard) { continue }
         $controls = [WizardWindow]::Visible($wizard.Handle)
         $labels = $controls.Text
+        if ($PlannedInstall -and $labels -contains 'Select Destination Location') { throw 'Unexpected destination prompt' }
         if ($labels -contains 'Ready to Install') { break }
         if ($labels -contains 'License Agreement') {
             if ($PlannedInstall) { throw 'Repeated license after handoff' }
