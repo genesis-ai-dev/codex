@@ -1,0 +1,30 @@
+diff --git a/build/win32/code.iss b/build/win32/code.iss
+--- a/build/win32/code.iss
++++ b/build/win32/code.iss
+@@ -1305,6 +1305,17 @@
+ end;
+ 
+ // Don't allow installing conflicting architectures
++// The scope launcher has already verified this directory and confirmed any migration.
++function FromScopeLauncher(): Boolean;
++begin
++  Result := ExpandConstant('{param:CodexScopeSetup|0}') = '1';
++end;
++
++function ShouldSkipPage(PageID: Integer): Boolean;
++begin
++  Result := FromScopeLauncher() and (PageID = wpSelectDir);
++end;
++
+ function InitializeSetup(): Boolean;
+ var
+   RegKey: String;
+@@ -1328,7 +1339,7 @@
+       #define IncompatibleArchRootKey "HKLM64"
+     #endif
+ 
+-    if Result and not WizardSilent() then begin
++    if Result and not WizardSilent() and not FromScopeLauncher() then begin
+       RegKey := 'SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\' + copy('{#IncompatibleTargetAppId}', 2, 38) + '_is1';
+ 
+       if RegKeyExists({#IncompatibleArchRootKey}, RegKey) then begin

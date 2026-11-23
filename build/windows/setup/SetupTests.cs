@@ -57,6 +57,9 @@ internal static class SetupTests {
                     }
                 }
             }
+            // A double-click must open Inno's license, tasks and ready pages with its own task defaults.
+            string wizardFlags = Setup.WizardFlags(root);
+            if (wizardFlags != "/SP- /CodexScopeSetup=1 /NORESTART /RESTARTEXITCODE=3010 /DIR=\"" + root + "\"") return 1;
             var cache = Path.GetTempPath();
             var userCache = Path.Combine(cache, "codex-stable-user-x64");
             var systemCache = Path.Combine(cache, "codex-stable-system-x64");
