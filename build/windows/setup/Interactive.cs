@@ -39,15 +39,11 @@ internal static partial class Setup {
     }
 
     private static bool AcceptWhileRunning(NamedPipeServerStream server, Process peer) {
-        var pending = server.BeginWaitForConnection(null, null);
-        using (var ready = pending.AsyncWaitHandle) {
-            while (!ready.WaitOne(100)) if (peer.HasExited) {
-                server.Dispose();
-                try { server.EndWaitForConnection(pending); } catch (ObjectDisposedException) { } catch (IOException) { }
-                return false;
-            }
-            server.EndWaitForConnection(pending);
+        var pending = server.WaitForConnectionAsync();
+        while (!pending.IsCompleted) {
+            if (peer.WaitForExit(100) && !pending.IsCompleted) return false;
         }
+        pending.GetAwaiter().GetResult();
         return true;
     }
 
