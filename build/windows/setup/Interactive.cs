@@ -79,7 +79,7 @@ internal static partial class Setup {
         if (item == null) return;
         if (!Equal(item.Uninstaller, old.Uninstaller) || Directory.Exists(Path.Combine(item.Root, "data")) ||
             (item.Machine && !TrustedMachineRoot(item.Root))) throw new IOException("Installation changed during setup.");
-        Launch(item.Uninstaller, "/SILENT /NORESTART", false);
+        Launch(item.Uninstaller, "/VERYSILENT /SUPPRESSMSGBOXES /NORESTART", false);
         if (File.Exists(Path.Combine(old.Root, "Codex.exe"))) throw new IOException("Previous installation still exists: " + old.Root);
     }
 
@@ -212,14 +212,17 @@ internal static partial class Setup {
                                 string id = ScopeId(machine);
                                 ValidatePlan(inventory, id, dest);
                                 old = inventory.Where(i => i.Id != id).ToList();
-                                if (old.Count != 0 && MessageBox.Show("Install in " + dest + ", then uninstall these copies?\n\n" +
-                                    String.Join("\n", old.Select(i => i.Root)), title, MessageBoxButtons.OKCancel,
-                                    MessageBoxIcon.Question, MessageBoxDefaultButton.Button2) != DialogResult.OK) code = 2;
-                                else {
-                                    if (machine || old.Any(i => i.Machine)) admin = new Elevation(machine, new IntPtr(Int64.Parse(scope[1])));
-                                    choice = machine;
-                                    code = 0;
+                                var review = new List<string>();
+                                if (old.Count > 0) {
+                                    review.Add("Install and verify the new copy in " + dest + ", then uninstall:");
+                                    review.AddRange(old.Select(i => "    " + (i.Machine ? "All Users" : "Current User") + " - " + i.Root));
+                                    if (!machine && old.Any(i => i.Machine))
+                                        review.Add("Other Windows accounts will lose access to the All Users installation.");
                                 }
+                                File.WriteAllLines(plan + ".migration", review, System.Text.Encoding.UTF8);
+                                if (machine || old.Any(i => i.Machine)) admin = new Elevation(machine, new IntPtr(Int64.Parse(scope[1])));
+                                choice = machine;
+                                code = 0;
                             } else if (command == "install" && choice.HasValue && !complete) {
                                 bool machine = choice.Value;
                                 TaskArgs(value);
@@ -252,6 +255,6 @@ internal static partial class Setup {
                     return complete ? 0 : 2;
                 }
             } finally { File.Delete(wizard); }
-        } finally { if (admin != null) admin.Dispose(); File.Delete(plan); }
+        } finally { if (admin != null) admin.Dispose(); File.Delete(plan + ".migration"); File.Delete(plan); }
     }
 }

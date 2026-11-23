@@ -10,7 +10,7 @@ diff --git a/build/win32/code.iss b/build/win32/code.iss
  WizardImageFile="{#RepoDir}\resources\win32\inno-big-100.bmp,{#RepoDir}\resources\win32\inno-big-125.bmp,{#RepoDir}\resources\win32\inno-big-150.bmp,{#RepoDir}\resources\win32\inno-big-175.bmp,{#RepoDir}\resources\win32\inno-big-200.bmp,{#RepoDir}\resources\win32\inno-big-225.bmp,{#RepoDir}\resources\win32\inno-big-250.bmp"
  WizardSmallImageFile="{#RepoDir}\resources\win32\inno-small-100.bmp,{#RepoDir}\resources\win32\inno-small-125.bmp,{#RepoDir}\resources\win32\inno-small-150.bmp,{#RepoDir}\resources\win32\inno-small-175.bmp,{#RepoDir}\resources\win32\inno-small-200.bmp,{#RepoDir}\resources\win32\inno-small-225.bmp,{#RepoDir}\resources\win32\inno-small-250.bmp"
  SetupIconFile={#RepoDir}\resources\win32\code.ico
-@@ -1305,6 +1305,112 @@
+@@ -1305,6 +1305,121 @@
  end;
  
  // Don't allow installing conflicting architectures
@@ -41,7 +41,7 @@ diff --git a/build/win32/code.iss b/build/win32/code.iss
 +    Launcher := GetIniString('setup', 'launcher', '', PlanFile);
 +    Session := GetIniString('setup', 'session', '', PlanFile);
 +    ScopePage := CreateInputOptionPage(wpLicense, 'Select Installation Scope',
-+      'Who should Codex be installed for?', 'Select an installation scope. All Users requires administrator access.', True, False);
++      'Who should Codex be installed for?', 'Choose who can use Codex. Changing scope replaces the existing copy and may require administrator access.', True, False);
 +    ScopePage.Add(GetIniString('setup', 'userLabel', 'Current User', PlanFile));
 +    ScopePage.Add(GetIniString('setup', 'systemLabel', 'All Users', PlanFile));
 +    ScopePage.SelectedValueIndex := GetIniInt('setup', 'default', 0, 0, 1, PlanFile);
@@ -58,8 +58,17 @@ diff --git a/build/win32/code.iss b/build/win32/code.iss
 +end;
 +
 +procedure CurPageChanged(CurPageID: Integer);
++var Review: TArrayOfString; I: Integer;
 +begin
 +  if PlanFile = '' then Exit;
++  if CurPageID = wpReady then begin
++    if not LoadStringsFromFile(PlanFile + '.migration', Review) then
++      RaiseException('Could not read the installation summary.');
++    if GetArrayLength(Review) > 0 then begin
++      WizardForm.ReadyMemo.Lines.Add('');
++      for I := 0 to GetArrayLength(Review) - 1 do WizardForm.ReadyMemo.Lines.Add(Review[I]);
++    end;
++  end;
 +  if (CurPageID = ScopePage.ID) and ScopeAuthorized then begin
 +    Request('release', '');
 +    ScopeAuthorized := False;
@@ -123,7 +132,7 @@ diff --git a/build/win32/code.iss b/build/win32/code.iss
  function InitializeSetup(): Boolean;
  var
    RegKey: String;
-@@ -1328,7 +1434,8 @@
+@@ -1328,7 +1443,8 @@
        #define IncompatibleArchRootKey "HKLM64"
      #endif
  
@@ -133,7 +142,7 @@ diff --git a/build/win32/code.iss b/build/win32/code.iss
        RegKey := 'SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\' + copy('{#IncompatibleTargetAppId}', 2, 38) + '_is1';
  
        if RegKeyExists({#IncompatibleArchRootKey}, RegKey) then begin
-@@ -1407,6 +1514,7 @@
+@@ -1407,6 +1523,7 @@
  // called before the wizard checks for running application
  function PrepareToInstall(var NeedsRestart: Boolean): String;
  begin
