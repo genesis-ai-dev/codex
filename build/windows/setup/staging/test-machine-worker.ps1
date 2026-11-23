@@ -23,6 +23,15 @@ internal static partial class Setup {
             worker.Run("cleanup");
         }
         VerifyProduct(Destination(Inventory(true),true),true,config["version"]);
+        string previous = Destination(Inventory(true), true);
+        using (var migration = new Elevation(false, IntPtr.Zero)) {
+            if (!File.Exists(Path.Combine(previous, "Codex.exe"))) throw new Exception("Original was removed before migration.");
+            InstallScope(false, "associatewithfiles");
+            VerifyProduct(Destination(Inventory(),false),false,config["version"]);
+            migration.Run("cleanup");
+        }
+        if (Inventory(true).Count != 0 || File.Exists(Path.Combine(previous, "Codex.exe")))
+            throw new Exception("All Users installation survived migration.");
         return 0;
     }
 }
