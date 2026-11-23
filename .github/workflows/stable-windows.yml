@@ -306,7 +306,7 @@ jobs:
 
       - name: Bundle signed installers
         if: env.SHOULD_BUILD == 'yes' && (env.SHOULD_DEPLOY == 'yes' || github.event.inputs.generate_assets == 'true') && env.SHOULD_BUILD_EXE_SYS != 'no' && env.SHOULD_BUILD_EXE_USR != 'no'
-        shell: pwsh
+        shell: powershell
         run: |
           ./build/windows/setup/bundle.ps1 -Arch $env:VSCODE_ARCH -Version $env:RELEASE_VERSION
           New-Item -ItemType Directory -Path signing_input, signing_output

@@ -15,7 +15,9 @@ try {
         & $csc /nologo /codepage:65001 /main:RecordSetup "/out:$fixture\Recorder-$scope.exe" /r:System.Drawing.dll /r:System.Windows.Forms.dll /r:System.Web.Extensions.dll "$PSScriptRoot\Setup.cs" "$PSScriptRoot\UpdateChainTests.cs"
         if ($LASTEXITCODE) { throw 'Recorder compilation failed' }
     }
-    & $csc /nologo /codepage:65001 /main:UpdateChainTests "/out:$fixture\launcher.exe" "/resource:$fixture\Recorder-user.exe,user" "/resource:$fixture\Recorder-system.exe,system" /r:System.Drawing.dll /r:System.Windows.Forms.dll /r:System.Web.Extensions.dll "$PSScriptRoot\Setup.cs" "$PSScriptRoot\UpdateChainTests.cs"
+    & node "$PSScriptRoot/share-payload.js" "$fixture/Recorder-user.exe" "$fixture/Recorder-system.exe" "$fixture/system.delta"
+    if ($LASTEXITCODE) { throw 'Recorder packaging failed' }
+    & $csc /nologo /codepage:65001 /main:UpdateChainTests "/out:$fixture\launcher.exe" "/resource:$fixture\Recorder-user.exe,user" "/resource:$fixture\system.delta,systemDelta" /r:System.Drawing.dll /r:System.Windows.Forms.dll /r:System.Web.Extensions.dll "$PSScriptRoot\Setup.cs" "$PSScriptRoot\UpdateChainTests.cs"
     if ($LASTEXITCODE) { throw 'Launcher compilation failed' }
     foreach ($scope in 'user','system') {
         $cache = Join-Path $fixture "codex-stable-$scope-$env:CODEX_UPDATE_ARCH"

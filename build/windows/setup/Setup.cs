@@ -227,11 +227,36 @@ internal static class Setup {
         return String.Join(" ", flags);
     }
 
+    internal static void WritePayload(Assembly assembly, bool machine, Stream output) {
+        using (var shared = assembly.GetManifestResourceStream("user")) {
+            if (!machine) {
+                shared.CopyTo(output);
+                return;
+            }
+            using (var delta = new BinaryReader(assembly.GetManifestResourceStream("systemDelta"))) {
+                var buffer = new byte[65536];
+                while (delta.BaseStream.Position < delta.BaseStream.Length) {
+                    int offset = delta.ReadInt32();
+                    int remaining = delta.ReadInt32();
+                    if (remaining <= 0 || offset < -1) throw new InvalidDataException("Invalid setup payload.");
+                    Stream source = offset == -1 ? delta.BaseStream : shared;
+                    if (offset >= 0) shared.Position = offset;
+                    while (remaining > 0) {
+                        int read = source.Read(buffer, 0, Math.Min(remaining, buffer.Length));
+                        if (read == 0) throw new EndOfStreamException();
+                        output.Write(buffer, 0, read);
+                        remaining -= read;
+                    }
+                }
+            }
+        }
+    }
+
     private static string ExtractPayload(Assembly assembly, bool machine) {
         string path = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N") + ".exe");
         using (var file = new FileStream(path, FileMode.CreateNew, FileAccess.Write)) {
             try {
-                using (var input = assembly.GetManifestResourceStream(machine ? "system" : "user")) input.CopyTo(file);
+                WritePayload(assembly, machine, file);
             } catch {
                 file.Close();
                 File.Delete(path);
