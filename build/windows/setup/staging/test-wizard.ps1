@@ -90,7 +90,14 @@ if ($PlannedInstall) {
         $controls = Wait-Page 'Completing the Codex Setup Wizard'
         Press $controls 'Launch Codex' # uncheck
         Press $controls 'Finish'
-        if (!$child.WaitForExit(15000) -or $child.ExitCode -ne 0) { throw 'Launcher did not finish' }
+        if (!$child.WaitForExit(45000)) {
+            $windows = [WizardWindow]::Visible([IntPtr]::Zero)
+            $visible = foreach ($w in ($windows | Where-Object { $_.Text -match 'Codex|Setup' })) {
+                "$($w.Text): $(([WizardWindow]::Visible($w.Handle)).Text -join ', ')"
+            }
+            throw "Launcher still running: $visible"
+        }
+        if ($child.ExitCode -ne 0) { throw "Launcher returned $($child.ExitCode)" }
         $manifest = Get-Content "$env:LOCALAPPDATA\Programs\Codex\resources\app\product.json" -Raw | ConvertFrom-Json
         if ($manifest.target -ne 'user') { throw 'Wrong installed scope' }
         Write-Output "Verified a denied elevation and a Current User install in one wizard ($script:wizardHandle)"
