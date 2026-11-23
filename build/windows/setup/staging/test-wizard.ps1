@@ -42,7 +42,7 @@ $setup = $assembly.GetType('Setup')
 $methods = [Reflection.BindingFlags]'Static,NonPublic'
 $payload = $setup.GetMethod('ExtractPayload', $methods).Invoke($null, @($assembly, $true))
 $dest = Join-Path $env:TEMP ("CodexWizardTest-" + [guid]::NewGuid())
-$flags = $setup.GetMethod('WizardFlags', $methods).Invoke($null, @($dest))
+$flags = $setup.GetMethod('WizardFlags', $methods).Invoke($null, @($dest.PSObject.BaseObject))
 try {
     $child = Start-Process -FilePath $payload -ArgumentList "$flags /LANG=english" -PassThru
     $deadline = [DateTime]::UtcNow.AddSeconds(90)
@@ -64,7 +64,7 @@ try {
             if (!$license -or !($controls | Where-Object Class -eq TNewCheckListBox)) { throw 'Missing license or tasks checklist' }
             $tasks = $true
         }
-        $next = $controls | Where-Object Text -eq 'Next' | Select-Object -First 1
+        $next = $controls | Where-Object { $_.Text -match '^Next(?: >)?$' } | Select-Object -First 1
         if ($next) { $next.Click() }
     } while ([DateTime]::UtcNow -lt $deadline)
     if (!$license -or !$tasks -or $labels -notcontains 'Ready to Install') {
