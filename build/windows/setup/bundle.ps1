@@ -26,7 +26,7 @@ try {
     if ($LASTEXITCODE) { throw 'Could not share the Windows setup payload' }
     [IO.File]::WriteAllText($temp, ($config | ConvertTo-Json))
     $csc = Join-Path $env:WINDIR 'Microsoft.NET\Framework64\v4.0.30319\csc.exe'
-    & $csc /nologo /optimize+ /target:winexe /platform:anycpu /reference:System.Windows.Forms.dll /reference:System.Drawing.dll /reference:System.Web.Extensions.dll "/win32icon:$PSScriptRoot/../../../src/stable/resources/win32/code.ico" "/win32manifest:$PSScriptRoot\launcher.manifest" "/out:$compiled" "/resource:$temp,config" "/resource:$user,user" "/resource:$delta,systemDelta" "$PSScriptRoot\Setup.cs"
+    & $csc /nologo /optimize+ /target:winexe /platform:anycpu /reference:System.Windows.Forms.dll /reference:System.Drawing.dll /reference:System.Web.Extensions.dll "/resource:$PSScriptRoot/../../../src/stable/resources/win32/inno-small-150.bmp,wizardLogo" "/win32icon:$PSScriptRoot/../../../src/stable/resources/win32/code.ico" "/win32manifest:$PSScriptRoot\launcher.manifest" "/out:$compiled" "/resource:$temp,config" "/resource:$user,user" "/resource:$delta,systemDelta" "$PSScriptRoot\Setup.cs"
     if ($LASTEXITCODE) { throw "Installer compilation failed ($LASTEXITCODE)" }
 
     $size = (Get-Item -LiteralPath $compiled).Length

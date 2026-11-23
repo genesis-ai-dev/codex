@@ -129,56 +129,80 @@ internal static class Setup {
         return installed.Any(i => i.Machine);
     }
 
-    private static bool? Choose(bool machine, List<Installation> installed) {
-        using (var form = new Form())
+    private static void AddScope(TableLayoutPanel body, bool machine, bool selected, List<Installation> installed) {
+        var paths = installed.Where(i => i.Machine == machine).Select(i => i.Root)
+            .Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+        string name = machine ? "Anyone who uses this computer (all users)" : "Only for me (" + Environment.UserName + ")";
+        var option = new RadioButton { Name = machine ? "allUsers" : "currentUser", AutoSize = true,
+            Text = name + (paths.Length == 0 ? "" : " (currently installed)"),
+            Checked = selected, UseMnemonic = false, Margin = new Padding(0, 12, 0, 2) };
+        body.Controls.Add(option);
+        if (paths.Length > 0) {
+            body.Controls.Add(new Label { Text = String.Join(Environment.NewLine, paths), UseMnemonic = false,
+                MaximumSize = new System.Drawing.Size(480, 0), AutoSize = true, Margin = new Padding(19, 0, 0, 4) });
+        }
+    }
+
+    internal static Form CreateScopePage(List<Installation> installed, System.Drawing.Image logo, System.Drawing.Font heading) {
+        var form = new Form { Text = "Setup - Codex", Font = System.Drawing.SystemFonts.MessageBoxFont,
+            AutoScaleDimensions = new System.Drawing.SizeF(96, 96), AutoScaleMode = AutoScaleMode.Dpi,
+            AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink, FormBorderStyle = FormBorderStyle.FixedDialog,
+            StartPosition = FormStartPosition.CenterScreen, MaximizeBox = false, MinimizeBox = false };
+        var layout = new TableLayoutPanel { AutoSize = true, ColumnCount = 1, Dock = DockStyle.Fill,
+            MinimumSize = new System.Drawing.Size(580, 0), BackColor = System.Drawing.SystemColors.Window,
+            ForeColor = System.Drawing.SystemColors.WindowText };
+        var header = new TableLayoutPanel { AutoSize = true, ColumnCount = 2, RowCount = 2, Dock = DockStyle.Fill,
+            Padding = new Padding(20, 8, 10, 8), Margin = Padding.Empty };
+        header.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        header.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+        header.Controls.Add(new Label { Text = "Choose Installation Options", Font = heading, AutoSize = true }, 0, 0);
+        header.Controls.Add(new Label { Text = "Who should Codex Translation Editor be installed for?",
+            AutoSize = true, Margin = new Padding(18, 0, 0, 0) }, 0, 1);
+        var picture = new PictureBox { Image = logo, SizeMode = PictureBoxSizeMode.Zoom, Width = 48, Height = 48,
+            Margin = Padding.Empty };
+        header.Controls.Add(picture, 1, 0);
+        header.SetRowSpan(picture, 2);
+        layout.Controls.Add(header);
+
+        var body = new TableLayoutPanel { AutoSize = true, ColumnCount = 1, Dock = DockStyle.Fill,
+            BackColor = System.Drawing.SystemColors.Control, ForeColor = System.Drawing.SystemColors.ControlText,
+            MinimumSize = new System.Drawing.Size(0, 280), Padding = new Padding(36, 20, 26, 18), Margin = Padding.Empty };
+        layout.Controls.Add(new Panel { Height = 1, BackColor = System.Drawing.SystemColors.ControlDark,
+            Dock = DockStyle.Top, Margin = Padding.Empty });
+        bool machine = DefaultMachineScope(installed);
+        AddScope(body, true, machine, installed);
+        AddScope(body, false, !machine, installed);
+        // Keep the options together at the top in a full-height wizard page.
+        for (int row = 0; row < body.Controls.Count; row++) body.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        body.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+        body.Controls.Add(new Label { Text = "Installing for all users requires administrator access.",
+            AutoSize = true, Anchor = AnchorStyles.Bottom | AnchorStyles.Left, Margin = new Padding(0, 16, 0, 2) });
+        body.RowCount = body.RowStyles.Count;
+        layout.Controls.Add(body);
+        layout.Controls.Add(new Panel { Height = 1, BackColor = System.Drawing.SystemColors.ControlDark,
+            Dock = DockStyle.Top, Margin = Padding.Empty });
+        var actions = new FlowLayoutPanel { AutoSize = true, Dock = DockStyle.Fill, Margin = Padding.Empty,
+            Padding = new Padding(8), FlowDirection = FlowDirection.RightToLeft, BackColor = System.Drawing.SystemColors.Control };
+        var next = new Button { Text = "Next", DialogResult = DialogResult.OK, AutoSize = true };
+        var cancel = new Button { Text = "Cancel", DialogResult = DialogResult.Cancel, AutoSize = true };
+        actions.Controls.Add(cancel);
+        actions.Controls.Add(next);
+        form.AcceptButton = next;
+        form.CancelButton = cancel;
+        layout.Controls.Add(actions);
+        form.Controls.Add(layout);
+        return form;
+    }
+
+    private static bool? Choose(List<Installation> installed) {
+        using (var stream = Assembly.GetExecutingAssembly().GetManifestResourceStream("wizardLogo"))
+        using (var logo = System.Drawing.Image.FromStream(stream))
+        using (var heading = new System.Drawing.Font(System.Drawing.SystemFonts.MessageBoxFont, System.Drawing.FontStyle.Bold))
         using (var icon = System.Drawing.Icon.ExtractAssociatedIcon(Application.ExecutablePath))
-        using (var heading = new System.Drawing.Font(System.Drawing.SystemFonts.MessageBoxFont.FontFamily, 14))
-        using (var logo = icon.ToBitmap()) {
-            form.Text = title;
+        using (var form = CreateScopePage(installed, logo, heading)) {
             form.Icon = icon;
-            form.Font = System.Drawing.SystemFonts.MessageBoxFont;
-            form.AutoScaleDimensions = new System.Drawing.SizeF(96, 96);
-            form.AutoScaleMode = AutoScaleMode.Dpi;
-            form.AutoSize = true;
-            form.AutoSizeMode = AutoSizeMode.GrowAndShrink;
-            form.FormBorderStyle = FormBorderStyle.FixedDialog;
-            form.StartPosition = FormStartPosition.CenterScreen;
-            form.MaximizeBox = form.MinimizeBox = false;
-
-            var layout = new TableLayoutPanel { AutoSize = true, ColumnCount = 1, Dock = DockStyle.Fill,
-                BackColor = System.Drawing.SystemColors.Window, ForeColor = System.Drawing.SystemColors.WindowText };
-            var body = new TableLayoutPanel { AutoSize = true, ColumnCount = 1, Padding = new Padding(20),
-                Margin = Padding.Empty, Dock = DockStyle.Fill };
-            var header = new FlowLayoutPanel { AutoSize = true, WrapContents = false, Margin = new Padding(0, 0, 0, 12) };
-            header.Controls.Add(new PictureBox { Image = logo, SizeMode = PictureBoxSizeMode.Zoom,
-                Width = 32, Height = 32, Margin = new Padding(0, 0, 10, 0) });
-            header.Controls.Add(new Label { Text = "Who can use Codex Translation Editor?", AutoSize = true,
-                Anchor = AnchorStyles.Left, Font = heading });
-            body.Controls.Add(header);
-            var user = new RadioButton { Text = "Only me", AutoSize = true, Checked = !machine };
-            var all = new RadioButton { Text = "Everyone on this PC", AutoSize = true, Checked = machine };
-            body.Controls.Add(user);
-            body.Controls.Add(all);
-            if (installed.Count > 0) {
-                body.Controls.Add(new Label { Text = installed.Count == 1 ? "Existing installation" : "Existing installations",
-                    AutoSize = true, Margin = new Padding(3, 14, 3, 0) });
-                body.Controls.Add(new Label { Text = String.Join(Environment.NewLine, installed.Select(i => i.Root)),
-                    MaximumSize = new System.Drawing.Size(420, 0), AutoSize = true, UseMnemonic = false });
-            }
-
-            var actions = new FlowLayoutPanel { AutoSize = true, Dock = DockStyle.Fill, Margin = Padding.Empty,
-                Padding = new Padding(10, 6, 10, 6), FlowDirection = FlowDirection.RightToLeft,
-                BackColor = System.Drawing.SystemColors.Control };
-            var next = new Button { Text = "Continue", DialogResult = DialogResult.OK, AutoSize = true };
-            var cancel = new Button { Text = "Cancel", DialogResult = DialogResult.Cancel, AutoSize = true };
-            actions.Controls.Add(cancel);
-            actions.Controls.Add(next);
-            form.AcceptButton = next;
-            form.CancelButton = cancel;
-            layout.Controls.Add(body);
-            layout.Controls.Add(actions);
-            form.Controls.Add(layout);
-            return form.ShowDialog() == DialogResult.OK ? (bool?)all.Checked : null;
+            return form.ShowDialog() == DialogResult.OK ?
+                (bool?)((RadioButton)form.Controls.Find("allUsers", true).Single()).Checked : null;
         }
     }
 
@@ -354,7 +378,7 @@ internal static class Setup {
         var installed = Inventory();
         if (args.Length != 0)
             return UpdateInstalled(args, assembly, installed, config);
-        bool? choice = Choose(DefaultMachineScope(installed), installed);
+        bool? choice = Choose(installed);
         if (!choice.HasValue) return 2;
         bool machine = choice.Value;
         string id = config["win32" + config["arch"] + (machine ? "AppId" : "UserAppId")].Substring(1);

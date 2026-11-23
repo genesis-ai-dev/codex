@@ -9,7 +9,9 @@ internal static class SetupTests {
         throw new Exception("Expected installer to reject an unsafe plan.");
     }
 
+    [STAThread]
     private static int Main() {
+        System.Windows.Forms.Application.EnableVisualStyles();
         var root = Directory.CreateDirectory(Path.Combine(Path.GetTempPath(), "Codex-tést 日本語 " + Guid.NewGuid())).FullName;
         try {
             var app = Directory.CreateDirectory(Path.Combine(root, "resources", "app")).FullName;
@@ -33,6 +35,27 @@ internal static class SetupTests {
             var system = new Setup.Installation { Id = "system", Machine = true,
                 Root = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "Codex") };
             var both = new List<Setup.Installation> { system, user };
+            using (var logo = System.Drawing.Image.FromStream(typeof(Setup).Assembly.GetManifestResourceStream("wizardLogo")))
+            using (var heading = new System.Drawing.Font(System.Drawing.SystemFonts.MessageBoxFont, System.Drawing.FontStyle.Bold)) {
+                foreach (var inventory in new[] { new List<Setup.Installation>(), registered,
+                    new List<Setup.Installation> {system}, both }) {
+                    using (var form = Setup.CreateScopePage(inventory, logo, heading)) {
+                        form.Show();
+                        foreach (bool machine in new[] {false, true}) {
+                            var radio = (System.Windows.Forms.RadioButton)form.Controls.Find(machine ? "allUsers" : "currentUser", true).Single();
+                            if (radio.Checked != (machine == Setup.DefaultMachineScope(inventory)) ||
+                                radio.Text.Contains("currently installed") != inventory.Any(i => i.Machine == machine)) return 1;
+                        }
+                        string preview = Environment.GetEnvironmentVariable("CODEX_SETUP_PREVIEW");
+                        if (preview != null && inventory.Count == 1 && inventory[0].Machine) {
+                            using (var image = new System.Drawing.Bitmap(form.Width, form.Height)) {
+                                form.DrawToBitmap(image, new System.Drawing.Rectangle(0, 0, form.Width, form.Height));
+                                image.Save(preview, System.Drawing.Imaging.ImageFormat.Png);
+                            }
+                        }
+                    }
+                }
+            }
             var cache = Path.GetTempPath();
             var userCache = Path.Combine(cache, "codex-stable-user-x64");
             var systemCache = Path.Combine(cache, "codex-stable-system-x64");
