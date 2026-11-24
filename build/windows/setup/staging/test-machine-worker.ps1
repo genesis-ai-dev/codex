@@ -28,6 +28,14 @@ internal static partial class Setup {
             if (!File.Exists(Path.Combine(previous, "Codex.exe"))) throw new Exception("Original was removed before migration.");
             InstallScope(false, "associatewithfiles");
             VerifyProduct(Destination(Inventory(),false),false,config["version"]);
+            string guard = Path.Combine(previous, "data");
+            Directory.CreateDirectory(guard);
+            bool refused = false;
+            try { migration.Run("cleanup"); } catch (IOException) { refused = true; }
+            if (!refused || !File.Exists(Path.Combine(previous, "Codex.exe")))
+                throw new Exception("Unsafe cleanup was not refused.");
+            VerifyProduct(Destination(Inventory(),false),false,config["version"]);
+            Directory.Delete(guard);
             migration.Run("cleanup");
         }
         if (Inventory(true).Count != 0 || File.Exists(Path.Combine(previous, "Codex.exe")))
