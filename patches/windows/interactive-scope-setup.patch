@@ -10,7 +10,7 @@ diff --git a/build/win32/code.iss b/build/win32/code.iss
  WizardImageFile="{#RepoDir}\resources\win32\inno-big-100.bmp,{#RepoDir}\resources\win32\inno-big-125.bmp,{#RepoDir}\resources\win32\inno-big-150.bmp,{#RepoDir}\resources\win32\inno-big-175.bmp,{#RepoDir}\resources\win32\inno-big-200.bmp,{#RepoDir}\resources\win32\inno-big-225.bmp,{#RepoDir}\resources\win32\inno-big-250.bmp"
  WizardSmallImageFile="{#RepoDir}\resources\win32\inno-small-100.bmp,{#RepoDir}\resources\win32\inno-small-125.bmp,{#RepoDir}\resources\win32\inno-small-150.bmp,{#RepoDir}\resources\win32\inno-small-175.bmp,{#RepoDir}\resources\win32\inno-small-200.bmp,{#RepoDir}\resources\win32\inno-small-225.bmp,{#RepoDir}\resources\win32\inno-small-250.bmp"
  SetupIconFile={#RepoDir}\resources\win32\code.ico
-@@ -1305,6 +1305,149 @@
+@@ -1305,6 +1305,159 @@
  end;
  
  // Don't allow installing conflicting architectures
@@ -18,6 +18,7 @@ diff --git a/build/win32/code.iss b/build/win32/code.iss
 +  PlanFile, Launcher, Session, AppliedTasks: String;
 +  DefaultTasks: String;
 +  TasksInitialized: Boolean;
++  DefaultsButton: TNewButton;
 +  ScopePage: TInputOptionWizardPage;
 +  PlanComplete, ScopeAuthorized, CleanupPending: Boolean;
 +  Progress: TOutputMarqueeProgressWizardPage;
@@ -34,6 +35,12 @@ diff --git a/build/win32/code.iss b/build/win32/code.iss
 +  Result := ExpandConstant('{param:CodexScopeSetup|0}') = '1';
 +end;
 +
++procedure RestoreTaskDefaults(Sender: TObject);
++begin
++  WizardSelectTasks('!desktopicon,!quicklaunchicon,!addcontextmenufiles,!addcontextmenufolders,!associatewithfiles,!addtopath');
++  WizardSelectTasks(DefaultTasks);
++end;
++
 +procedure InitializeWizard();
 +begin
 +#if "user" == InstallTarget
@@ -47,6 +54,12 @@ diff --git a/build/win32/code.iss b/build/win32/code.iss
 +    ScopePage.Add(GetIniString('setup', 'userLabel', 'Current User', PlanFile));
 +    ScopePage.Add(GetIniString('setup', 'systemLabel', 'All Users', PlanFile));
 +    ScopePage.SelectedValueIndex := GetIniInt('setup', 'default', 0, 0, 1, PlanFile);
++    DefaultsButton := TNewButton.Create(WizardForm);
++    DefaultsButton.Parent := WizardForm.TasksList.Parent;
++    DefaultsButton.Caption := 'Restore defaults';
++    DefaultsButton.SetBounds(WizardForm.TasksList.Left, WizardForm.TasksList.Top + WizardForm.TasksList.Height - ScaleY(24), ScaleX(104), ScaleY(24));
++    WizardForm.TasksList.Height := WizardForm.TasksList.Height - ScaleY(32);
++    DefaultsButton.OnClick := @RestoreTaskDefaults;
 +    Progress := CreateOutputMarqueeProgressPage('Installing Codex', 'Please wait while Setup installs Codex.');
 +  end;
 +#endif
@@ -68,10 +81,7 @@ diff --git a/build/win32/code.iss b/build/win32/code.iss
 +    else Saved := GetIniString('setup', 'userTasks', '', PlanFile);
 +    if not TasksInitialized then DefaultTasks := WizardSelectedTasks(False);
 +    if not TasksInitialized or (Saved <> AppliedTasks) then begin
-+      if TasksInitialized then begin
-+        WizardSelectTasks('!desktopicon,!quicklaunchicon,!addcontextmenufiles,!addcontextmenufolders,!associatewithfiles,!addtopath');
-+        WizardSelectTasks(DefaultTasks);
-+      end;
++      if TasksInitialized then RestoreTaskDefaults(nil);
 +      WizardSelectTasks(Saved);
 +      AppliedTasks := Saved;
 +      TasksInitialized := True;
@@ -160,7 +170,7 @@ diff --git a/build/win32/code.iss b/build/win32/code.iss
  function InitializeSetup(): Boolean;
  var
    RegKey: String;
-@@ -1328,7 +1471,8 @@
+@@ -1328,7 +1481,8 @@
        #define IncompatibleArchRootKey "HKLM64"
      #endif
  
@@ -170,7 +180,7 @@ diff --git a/build/win32/code.iss b/build/win32/code.iss
        RegKey := 'SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\' + copy('{#IncompatibleTargetAppId}', 2, 38) + '_is1';
  
        if RegKeyExists({#IncompatibleArchRootKey}, RegKey) then begin
-@@ -1407,6 +1551,7 @@
+@@ -1407,6 +1561,7 @@
  // called before the wizard checks for running application
  function PrepareToInstall(var NeedsRestart: Boolean): String;
  begin
