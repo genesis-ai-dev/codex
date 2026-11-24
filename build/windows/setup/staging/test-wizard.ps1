@@ -15,6 +15,8 @@ public sealed class WizardWindow {
     [DllImport("user32.dll", CharSet=CharSet.Unicode)] private static extern int GetClassName(IntPtr hwnd, StringBuilder text, int count);
     [DllImport("user32.dll", CharSet=CharSet.Unicode)] private static extern IntPtr SendMessageTimeout(IntPtr hwnd, uint msg, IntPtr count, StringBuilder text, uint flags, uint timeout, out IntPtr result);
     [DllImport("user32.dll")] private static extern bool PostMessage(IntPtr hwnd, uint msg, IntPtr wParam, IntPtr lParam);
+    [DllImport("user32.dll")] private static extern bool IsWindowEnabled(IntPtr hwnd);
+    public bool Enabled { get { return IsWindowEnabled(Handle); } }
     public IntPtr Handle;
     public string Class, Text;
     public static WizardWindow[] Visible(IntPtr parent) {
@@ -84,6 +86,23 @@ if ($PlannedInstall) {
         Start-Sleep -Milliseconds 300
         Next-Page $controls
         $controls = Wait-Page 'Select Additional Tasks'
+        $defaults = $controls | Where-Object Text -eq 'Restore defaults'
+        if (!$defaults -or $defaults.Enabled) { throw 'Restore should start disabled at defaults' }
+        $tasks = $controls | Where-Object Class -eq TNewCheckListBox | Select-Object -First 1
+        $tasks.Key(35); $tasks.Key(32)
+        Start-Sleep -Milliseconds 300
+        if (!$defaults.Enabled) { throw 'Changing a task should enable Restore' }
+        $defaults.Click()
+        Start-Sleep -Milliseconds 300
+        if ($defaults.Enabled) { throw 'Restoring defaults should disable Restore' }
+        $tasks.Key(35); $tasks.Key(32)
+        Start-Sleep -Milliseconds 300
+        if (!$defaults.Enabled) { throw 'Expected a non-default task before going back' }
+        ($controls | Where-Object { $_.Text -match 'Back$' } | Select-Object -First 1).Click()
+        $controls = Wait-Page 'Select Installation Scope'
+        Next-Page $controls
+        $controls = Wait-Page 'Select Additional Tasks'
+        if (($controls | Where-Object Text -eq 'Restore defaults').Enabled) { throw 'Back did not reset tasks' }
         Next-Page $controls
         $controls = Wait-Page 'Ready to Install'
         Press $controls 'Install'

@@ -10,14 +10,14 @@ diff --git a/build/win32/code.iss b/build/win32/code.iss
  WizardImageFile="{#RepoDir}\resources\win32\inno-big-100.bmp,{#RepoDir}\resources\win32\inno-big-125.bmp,{#RepoDir}\resources\win32\inno-big-150.bmp,{#RepoDir}\resources\win32\inno-big-175.bmp,{#RepoDir}\resources\win32\inno-big-200.bmp,{#RepoDir}\resources\win32\inno-big-225.bmp,{#RepoDir}\resources\win32\inno-big-250.bmp"
  WizardSmallImageFile="{#RepoDir}\resources\win32\inno-small-100.bmp,{#RepoDir}\resources\win32\inno-small-125.bmp,{#RepoDir}\resources\win32\inno-small-150.bmp,{#RepoDir}\resources\win32\inno-small-175.bmp,{#RepoDir}\resources\win32\inno-small-200.bmp,{#RepoDir}\resources\win32\inno-small-225.bmp,{#RepoDir}\resources\win32\inno-small-250.bmp"
  SetupIconFile={#RepoDir}\resources\win32\code.ico
-@@ -1305,6 +1305,159 @@
+@@ -1305,6 +1305,172 @@
  end;
  
  // Don't allow installing conflicting architectures
 +var
-+  PlanFile, Launcher, Session, AppliedTasks: String;
++  PlanFile, Launcher, Session: String;
 +  DefaultTasks: String;
-+  TasksInitialized: Boolean;
++  TasksInitialized, ResetOnReturn: Boolean;
 +  DefaultsButton: TNewButton;
 +  ScopePage: TInputOptionWizardPage;
 +  PlanComplete, ScopeAuthorized, CleanupPending: Boolean;
@@ -35,10 +35,16 @@ diff --git a/build/win32/code.iss b/build/win32/code.iss
 +  Result := ExpandConstant('{param:CodexScopeSetup|0}') = '1';
 +end;
 +
++procedure UpdateDefaultsButton(Sender: TObject);
++begin
++  DefaultsButton.Enabled := WizardSelectedTasks(False) <> DefaultTasks;
++end;
++
 +procedure RestoreTaskDefaults(Sender: TObject);
 +begin
 +  WizardSelectTasks('!desktopicon,!quicklaunchicon,!addcontextmenufiles,!addcontextmenufolders,!associatewithfiles,!addtopath');
 +  WizardSelectTasks(DefaultTasks);
++  UpdateDefaultsButton(nil);
 +end;
 +
 +procedure InitializeWizard();
@@ -59,6 +65,7 @@ diff --git a/build/win32/code.iss b/build/win32/code.iss
 +    DefaultsButton.Caption := 'Restore defaults';
 +    DefaultsButton.SetBounds(WizardForm.TasksList.Left, WizardForm.TasksList.Top + WizardForm.TasksList.Height - ScaleY(24), ScaleX(104), ScaleY(24));
 +    WizardForm.TasksList.Height := WizardForm.TasksList.Height - ScaleY(32);
++    WizardForm.TasksList.OnClickCheck := @UpdateDefaultsButton;
 +    DefaultsButton.OnClick := @RestoreTaskDefaults;
 +    Progress := CreateOutputMarqueeProgressPage('Installing Codex', 'Please wait while Setup installs Codex.');
 +  end;
@@ -79,13 +86,13 @@ diff --git a/build/win32/code.iss b/build/win32/code.iss
 +  if CurPageID = wpSelectTasks then begin
 +    if ScopePage.SelectedValueIndex = 1 then Saved := GetIniString('setup', 'systemTasks', '', PlanFile)
 +    else Saved := GetIniString('setup', 'userTasks', '', PlanFile);
-+    if not TasksInitialized then DefaultTasks := WizardSelectedTasks(False);
-+    if not TasksInitialized or (Saved <> AppliedTasks) then begin
-+      if TasksInitialized then RestoreTaskDefaults(nil);
++    if not TasksInitialized then begin
++      DefaultTasks := WizardSelectedTasks(False);
 +      WizardSelectTasks(Saved);
-+      AppliedTasks := Saved;
 +      TasksInitialized := True;
-+    end;
++    end else if ResetOnReturn then RestoreTaskDefaults(nil);
++    ResetOnReturn := False;
++    UpdateDefaultsButton(nil);
 +  end;
 +  if CurPageID = wpReady then begin
 +    if not LoadStringsFromFile(PlanFile + '.migration', Review) then
@@ -99,6 +106,12 @@ diff --git a/build/win32/code.iss b/build/win32/code.iss
 +    Request('release', '');
 +    ScopeAuthorized := False;
 +  end;
++end;
++
++function BackButtonClick(CurPageID: Integer): Boolean;
++begin
++  Result := True;
++  if (PlanFile <> '') and (CurPageID = wpSelectTasks) then ResetOnReturn := True;
 +end;
 +
 +function NextButtonClick(CurPageID: Integer): Boolean;
@@ -170,7 +183,7 @@ diff --git a/build/win32/code.iss b/build/win32/code.iss
  function InitializeSetup(): Boolean;
  var
    RegKey: String;
-@@ -1328,7 +1481,8 @@
+@@ -1328,7 +1494,8 @@
        #define IncompatibleArchRootKey "HKLM64"
      #endif
  
@@ -180,7 +193,7 @@ diff --git a/build/win32/code.iss b/build/win32/code.iss
        RegKey := 'SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\' + copy('{#IncompatibleTargetAppId}', 2, 38) + '_is1';
  
        if RegKeyExists({#IncompatibleArchRootKey}, RegKey) then begin
-@@ -1407,6 +1561,7 @@
+@@ -1407,6 +1574,7 @@
  // called before the wizard checks for running application
  function PrepareToInstall(var NeedsRestart: Boolean): String;
  begin
