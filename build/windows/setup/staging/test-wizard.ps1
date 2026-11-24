@@ -119,6 +119,40 @@ if ($PlannedInstall) {
         if ($child.ExitCode -ne 0) { throw "Launcher returned $($child.ExitCode)" }
         $manifest = Get-Content "$env:LOCALAPPDATA\Programs\Codex\resources\app\product.json" -Raw | ConvertFrom-Json
         if ($manifest.target -ne 'user') { throw 'Wrong installed scope' }
+        # Seed a previous desktop-icon choice in this disposable account.
+        $uninstall = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall'
+        $registration = @(Get-ChildItem $uninstall | Where-Object {
+            ([string]$_.GetValue('InstallLocation')).TrimEnd('\') -eq "$env:LOCALAPPDATA\Programs\Codex"
+        })
+        if ($registration.Count -ne 1) { throw 'Expected one Current User registration' }
+        Set-ItemProperty $registration[0].PSPath 'Inno Setup: Selected Tasks' 'desktopicon,associatewithfiles,addtopath'
+        Set-ItemProperty $registration[0].PSPath 'Inno Setup: Deselected Tasks' 'addcontextmenufiles,addcontextmenufolders'
+        $script:wizardHandle = $null
+        $child = Start-Process $Package -PassThru
+        $controls = Wait-Page 'License Agreement'
+        Press $controls 'I accept the agreement'
+        Next-Page $controls
+        $controls = Wait-Page 'Select Installation Scope'
+        Next-Page $controls
+        foreach ($previous in @('Select Installation Scope','Ready to Install')) {
+            $controls = Wait-Page 'Select Additional Tasks'
+            $defaults = $controls | Where-Object Text -eq 'Restore defaults'
+            if (!$defaults.Enabled) { throw 'Expected saved desktop-icon choice' }
+            $defaults.Click()
+            Start-Sleep -Milliseconds 300
+            if ($defaults.Enabled) { throw 'Expected temporary default choices' }
+            if ($previous -eq 'Ready to Install') {
+                Next-Page $controls
+                $controls = Wait-Page $previous
+            }
+            ($controls | Where-Object { $_.Text -match 'Back$' } | Select-Object -First 1).Click()
+            if ($previous -eq 'Select Installation Scope') {
+                $controls = Wait-Page $previous
+                Next-Page $controls
+            }
+        }
+        $controls = Wait-Page 'Select Additional Tasks'
+        if (!($controls | Where-Object Text -eq 'Restore defaults').Enabled) { throw 'Review lost the saved desktop-icon choice' }
         Write-Output "Verified a denied elevation and a Current User install in one wizard ($script:wizardHandle)"
     } finally {
         if (!$child.HasExited) { & taskkill /PID $child.Id /T /F | Out-Null }
