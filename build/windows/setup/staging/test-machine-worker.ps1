@@ -13,20 +13,34 @@ try {
     @'
 using System;
 using System.IO;
+using System.Linq;
 internal static partial class Setup {
     internal static int TestMachineWorker(string[] args) {
+        const string tasks = "desktopicon,addtopath,associatewithfiles,addcontextmenufiles,addcontextmenufolders";
+        if (args.Length == 1 && args[0] == "reverse") {
+            ReadConfig();
+            var original = Inventory().Single(i => !i.Machine);
+            using (var worker = new Elevation(true, IntPtr.Zero)) {
+                worker.Run("install", tasks);
+                RemoveOld(original);
+                worker.Run("cleanup");
+            }
+            if (Inventory().Count != 1 || File.Exists(Path.Combine(original.Root, "Codex.exe")))
+                throw new Exception("Current User installation survived migration.");
+            return 0;
+        }
         if (args.Length > 0) return Main(args);
         ReadConfig();
         using (var worker = new Elevation(true, IntPtr.Zero)) {
             if (Directory.Exists(Destination(Inventory(true),true))) throw new Exception("Approval installed files before Install.");
-            worker.Run("install", "associatewithfiles");
+            worker.Run("install", tasks);
             worker.Run("cleanup");
         }
         VerifyProduct(Destination(Inventory(true),true),true,config["version"]);
         string previous = Destination(Inventory(true), true);
         using (var migration = new Elevation(false, IntPtr.Zero)) {
             if (!File.Exists(Path.Combine(previous, "Codex.exe"))) throw new Exception("Original was removed before migration.");
-            InstallScope(false, "associatewithfiles");
+            InstallScope(false, tasks);
             VerifyProduct(Destination(Inventory(),false),false,config["version"]);
             string guard = Path.Combine(previous, "data");
             Directory.CreateDirectory(guard);
@@ -51,4 +65,29 @@ internal static class WorkerTest {
     if ($LASTEXITCODE) { throw 'Worker test compilation failed' }
     & "$dir\WorkerTest.exe"
     if ($LASTEXITCODE) { throw 'Machine worker failed' }
+    function Assert-Integrations([bool]$machine) {
+        $hive = if ($machine) { 'HKLM:' } else { 'HKCU:' }
+        $base = if ($machine) { $env:ProgramFiles } else { "$env:LOCALAPPDATA\Programs" }
+        $dest = Join-Path $base Codex
+        $product = Get-Content "$dest\resources\app\product.json" -Raw | ConvertFrom-Json
+        $exe = Join-Path $dest 'Codex.exe'
+        $scope = if ($machine) { 'Machine' } else { 'User' }
+        if (([Environment]::GetEnvironmentVariable('Path', $scope) -split ';') -notcontains "$dest\bin") { throw "Missing $scope PATH entry" }
+        $desktop = if ($machine) { 'CommonDesktopDirectory' } else { 'DesktopDirectory' }
+        $menu = if ($machine) { 'CommonPrograms' } else { 'Programs' }
+        $name = $product.nameLong
+        $shell = New-Object -ComObject WScript.Shell
+        foreach ($link in @("$( [Environment]::GetFolderPath($desktop) )\$name.lnk", "$( [Environment]::GetFolderPath($menu) )\$name\$name.lnk")) {
+            if (!(Test-Path -LiteralPath $link) -or $shell.CreateShortcut($link).TargetPath -ne $exe) { throw "Wrong shortcut: $link" }
+        }
+        $id = $product.win32RegValueName
+        foreach ($key in @("$id.ascx\shell\open", "*\shell\$id", "directory\shell\$id")) {
+            $command = (Get-Item -LiteralPath "$hive\Software\Classes\$key\command").GetValue('')
+            if (!$command.StartsWith('"' + $exe + '"', [StringComparison]::OrdinalIgnoreCase)) { throw "Wrong $scope association: $key" }
+        }
+    }
+    Assert-Integrations $false
+    & "$dir\WorkerTest.exe" reverse
+    if ($LASTEXITCODE) { throw 'Reverse migration failed' }
+    Assert-Integrations $true
 } finally { Remove-Item -Recurse -Force $dir }
