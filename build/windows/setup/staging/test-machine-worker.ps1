@@ -29,9 +29,9 @@ internal static partial class Setup {
                 throw new Exception("Current User installation survived migration.");
             return 0;
         }
-        if (args.Length > 0) return Main(args);
+        if (args.Length > 0 && args[0] != "forward") return Main(args);
         ReadConfig();
-        using (var worker = new Elevation(true, IntPtr.Zero)) {
+        if (args.Length == 0) using (var worker = new Elevation(true, IntPtr.Zero)) {
             if (Directory.Exists(Destination(Inventory(true),true))) throw new Exception("Approval installed files before Install.");
             worker.Run("install", tasks);
             worker.Run("cleanup");
@@ -86,8 +86,15 @@ internal static class WorkerTest {
             if (!$command.StartsWith('"' + $exe + '"', [StringComparison]::OrdinalIgnoreCase)) { throw "Wrong $scope association: $key" }
         }
     }
-    Assert-Integrations $false
-    & "$dir\WorkerTest.exe" reverse
-    if ($LASTEXITCODE) { throw 'Reverse migration failed' }
-    Assert-Integrations $true
+    foreach ($round in 1..5) {
+        if ($round -gt 1) {
+            & "$dir\WorkerTest.exe" forward
+            if ($LASTEXITCODE) { throw "All Users to Current User failed in round $round" }
+        }
+        Assert-Integrations $false
+        & "$dir\WorkerTest.exe" reverse
+        if ($LASTEXITCODE) { throw "Current User to All Users failed in round $round" }
+        Assert-Integrations $true
+        Write-Host "Verified both migration directions in round $round"
+    }
 } finally { Remove-Item -Recurse -Force $dir }
