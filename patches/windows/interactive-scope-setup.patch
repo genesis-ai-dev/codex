@@ -10,12 +10,14 @@ diff --git a/build/win32/code.iss b/build/win32/code.iss
  WizardImageFile="{#RepoDir}\resources\win32\inno-big-100.bmp,{#RepoDir}\resources\win32\inno-big-125.bmp,{#RepoDir}\resources\win32\inno-big-150.bmp,{#RepoDir}\resources\win32\inno-big-175.bmp,{#RepoDir}\resources\win32\inno-big-200.bmp,{#RepoDir}\resources\win32\inno-big-225.bmp,{#RepoDir}\resources\win32\inno-big-250.bmp"
  WizardSmallImageFile="{#RepoDir}\resources\win32\inno-small-100.bmp,{#RepoDir}\resources\win32\inno-small-125.bmp,{#RepoDir}\resources\win32\inno-small-150.bmp,{#RepoDir}\resources\win32\inno-small-175.bmp,{#RepoDir}\resources\win32\inno-small-200.bmp,{#RepoDir}\resources\win32\inno-small-225.bmp,{#RepoDir}\resources\win32\inno-small-250.bmp"
  SetupIconFile={#RepoDir}\resources\win32\code.ico
-@@ -1305,6 +1305,133 @@
+@@ -1305,6 +1305,149 @@
  end;
  
  // Don't allow installing conflicting architectures
 +var
-+  PlanFile, Launcher, Session: String;
++  PlanFile, Launcher, Session, AppliedTasks: String;
++  DefaultTasks: String;
++  TasksInitialized: Boolean;
 +  ScopePage: TInputOptionWizardPage;
 +  PlanComplete, ScopeAuthorized, CleanupPending: Boolean;
 +  Progress: TOutputMarqueeProgressWizardPage;
@@ -58,9 +60,23 @@ diff --git a/build/win32/code.iss b/build/win32/code.iss
 +end;
 +
 +procedure CurPageChanged(CurPageID: Integer);
-+var Review: TArrayOfString; I: Integer;
++var Review: TArrayOfString; I: Integer; Saved: String;
 +begin
 +  if PlanFile = '' then Exit;
++  if CurPageID = wpSelectTasks then begin
++    if ScopePage.SelectedValueIndex = 1 then Saved := GetIniString('setup', 'systemTasks', '', PlanFile)
++    else Saved := GetIniString('setup', 'userTasks', '', PlanFile);
++    if not TasksInitialized then DefaultTasks := WizardSelectedTasks(False);
++    if not TasksInitialized or (Saved <> AppliedTasks) then begin
++      if TasksInitialized then begin
++        WizardSelectTasks('!desktopicon,!quicklaunchicon,!addcontextmenufiles,!addcontextmenufolders,!associatewithfiles,!addtopath');
++        WizardSelectTasks(DefaultTasks);
++      end;
++      WizardSelectTasks(Saved);
++      AppliedTasks := Saved;
++      TasksInitialized := True;
++    end;
++  end;
 +  if CurPageID = wpReady then begin
 +    if not LoadStringsFromFile(PlanFile + '.migration', Review) then
 +      RaiseException('Could not read the installation summary.');
@@ -144,7 +160,7 @@ diff --git a/build/win32/code.iss b/build/win32/code.iss
  function InitializeSetup(): Boolean;
  var
    RegKey: String;
-@@ -1328,7 +1455,8 @@
+@@ -1328,7 +1471,8 @@
        #define IncompatibleArchRootKey "HKLM64"
      #endif
  
@@ -154,7 +170,7 @@ diff --git a/build/win32/code.iss b/build/win32/code.iss
        RegKey := 'SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\' + copy('{#IncompatibleTargetAppId}', 2, 38) + '_is1';
  
        if RegKeyExists({#IncompatibleArchRootKey}, RegKey) then begin
-@@ -1407,6 +1535,7 @@
+@@ -1407,6 +1551,7 @@
  // called before the wizard checks for running application
  function PrepareToInstall(var NeedsRestart: Boolean): String;
  begin

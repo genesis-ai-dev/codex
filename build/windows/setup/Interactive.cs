@@ -47,6 +47,20 @@ internal static partial class Setup {
         return true;
     }
 
+    internal static string PreviousTasks(List<Installation> inventory, bool machine, string id) {
+        var source = inventory.OrderByDescending(i => i.Id == id)
+            .ThenByDescending(i => i.Machine == machine).FirstOrDefault();
+        if (source == null) return "";
+        var selected = (source.SelectedTasks ?? "").Split(',');
+        var deselected = (source.DeselectedTasks ?? "").Split(',');
+        var tasks = new List<string>();
+        foreach (string name in Choices) {
+            if (selected.Contains(name, StringComparer.OrdinalIgnoreCase)) tasks.Add(name);
+            else if (deselected.Contains(name, StringComparer.OrdinalIgnoreCase)) tasks.Add("!" + name);
+        }
+        return String.Join(",", tasks);
+    }
+
     private static string TaskArgs(string selected) {
         var names = selected.Split(new[] { ',' }, StringSplitOptions.RemoveEmptyEntries);
         if (names.Any(n => !Choices.Contains(n))) throw new IOException("Unrecognized setup task.");
@@ -195,12 +209,16 @@ internal static partial class Setup {
         try {
             File.WriteAllLines(plan, new[] { "[setup]", "default=" + (DefaultMachineScope(initial) ? "1" : "0"),
                 "systemLabel=" + ScopeLabel(initial,true).Replace("\n"," - "), "userLabel=" + ScopeLabel(initial,false).Replace("\n"," - "),
+                "userTasks=" + PreviousTasks(initial, false, ScopeId(false)),
+                "systemTasks=" + PreviousTasks(initial, true, ScopeId(true)),
                 "userDir=" + Destination(initial, false), "systemDir=" + Destination(initial, true),
                 "launcher=" + assembly.Location, "session=" + token }, System.Text.Encoding.Unicode);
+            // Seed the outer wizard with the code.iss defaults before applying the
+            // chosen registration. Its own AppId can only see Current User.
             string wizard = ExtractPayload(assembly, false);
             try {
                 using (var pipe = Server(token, false))
-                using (var ui = Process.Start(new ProcessStartInfo(wizard, "/SP- /CodexPlan=\"" + plan + "\"") { UseShellExecute = false })) {
+                using (var ui = Process.Start(new ProcessStartInfo(wizard, "/SP- /TASKS=associatewithfiles,addtopath /CodexPlan=\"" + plan + "\"") { UseShellExecute = false })) {
                     bool? choice = null;
                     bool complete = false, installed = false, machineClean = false;
                     string dest = null;
