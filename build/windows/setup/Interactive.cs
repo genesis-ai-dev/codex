@@ -88,11 +88,23 @@ internal static partial class Setup {
             throw new IOException("New installation was not registered. Previous copies were kept.");
     }
 
+    // Inno may return before its temporary helper deletes the registered
+    // uninstaller. An immediate scope switch would see an occupied directory.
+    private static void WaitForUninstallerRemoval(Installation old) {
+        var elapsed = Stopwatch.StartNew();
+        while (ExistingAttributes(old.Uninstaller).HasValue) {
+            if (elapsed.Elapsed >= TimeSpan.FromSeconds(15))
+                throw new IOException("Windows has not finished removing " + old.Uninstaller + ". Retry cleanup.");
+            Thread.Sleep(100);
+        }
+    }
+
     private static void RemoveOld(Installation old) {
         var item = Inventory(old.Machine).SingleOrDefault(i => i.Id == old.Id && Equal(i.Root, old.Root));
         if (item == null) {
             if (File.Exists(Path.Combine(old.Root, "Codex.exe")))
                 throw new IOException("The previous copy still exists but its uninstaller is no longer registered: " + old.Root);
+            WaitForUninstallerRemoval(old);
             return;
         }
         if (!Equal(item.Uninstaller, old.Uninstaller) || Directory.Exists(Path.Combine(item.Root, "data")) ||
@@ -100,6 +112,7 @@ internal static partial class Setup {
         Launch(item.Uninstaller, "/VERYSILENT /SUPPRESSMSGBOXES /NORESTART", false);
         if (File.Exists(Path.Combine(old.Root, "Codex.exe")) || Inventory(old.Machine).Any(i => i.Id == old.Id && Equal(i.Root, old.Root)))
             throw new IOException("Previous installation still exists: " + old.Root);
+        WaitForUninstallerRemoval(old);
     }
 
     [DllImport("kernel32.dll", SetLastError = true)]
