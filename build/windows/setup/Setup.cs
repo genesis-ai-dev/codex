@@ -183,7 +183,7 @@ internal static partial class Setup {
         }
         if (!installed.Any(i => i.Id == targetId && Equal(i.Root, dest)) &&
             ExistingAttributes(dest).HasValue && Directory.EnumerateFileSystemEntries(dest).Any())
-            throw new IOException("Another application or files already occupy " + dest);
+            throw new IOException("Another application or files already occupy " + dest + " (" + String.Join(", ", Directory.EnumerateFileSystemEntries(dest).Take(5).Select(Path.GetFileName)) + ").");
     }
 
     // Released clients cache the downloaded EXE under codex-stable-{user|system}-{arch}.
