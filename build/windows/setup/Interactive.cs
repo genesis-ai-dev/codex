@@ -117,12 +117,12 @@ internal static partial class Setup {
             using (var parent = Process.GetProcessById((int)serverPid)) {
                 if (!Equal(parent.MainModule.FileName, Assembly.GetExecutingAssembly().Location)) return 1;
             }
-            var before = Inventory(true);
-            string dest = Destination(before, true);
-            if (install) ValidatePlan(before, ScopeId(true), dest);
-            var old = before.Where(i => !install || i.Id != ScopeId(true)).ToList();
-            output.Write("ready"); output.Flush();
             try {
+                var before = Inventory(true);
+                string dest = Destination(before, true);
+                if (install) ValidatePlan(before, ScopeId(true), dest);
+                var old = before.Where(i => !install || i.Id != ScopeId(true)).ToList();
+                output.Write("ready"); output.Flush();
                 string tasks = "";
                 if (install) {
                     if (input.ReadString() != "install") return 2;
@@ -172,7 +172,8 @@ internal static partial class Setup {
                     throw new IOException("Unexpected administrator setup process.");
                 input = new BinaryReader(pipe);
                 output = new BinaryWriter(pipe);
-                if (input.ReadString() != "ready") throw new IOException("Administrator setup was not ready.");
+                string startup = input.ReadString();
+                if (startup != "ready") throw new IOException("Administrator setup could not start: " + startup);
             } catch { Dispose(); throw; }
         }
 
