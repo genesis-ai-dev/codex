@@ -73,10 +73,22 @@ internal static class SetupTests {
                     File.WriteAllText(uninstaller, "");
                     scope.SetValue("InstallLocation", root);
                     scope.SetValue("UninstallString", "\"" + uninstaller + "\"");
+                    scope.SetValue("Inno Setup: Selected Tasks", "desktopicon,obsolete");
+                    scope.SetValue("Inno Setup: Deselected Tasks", "addtopath");
                     var result = new List<Setup.Installation>();
                     Setup.ReadRegistrations(hive, false, new[] { "legacy" }, result);
                     Setup.ReadRegistrations(hive, false, new[] { "legacy" }, result);
                     if (result.Count != 1 || Setup.DefaultMachineScope(result)) return 1;
+                    if (Setup.PreviousTasks(result, true, "system") != "desktopicon,!addtopath") return 1;
+                    var machine = new Setup.Installation { Machine = true, Id = "system",
+                        SelectedTasks = "", DeselectedTasks = "desktopicon,associatewithfiles,addtopath" };
+                    result.Add(machine);
+                    if (Setup.PreviousTasks(result, true, "system") != "!desktopicon,!associatewithfiles,!addtopath" ||
+                        Setup.PreviousTasks(result, false, "legacy") != "desktopicon,!addtopath") return 1;
+                    result.RemoveAt(0);
+                    if (Setup.PreviousTasks(result, false, "legacy") != "!desktopicon,!associatewithfiles,!addtopath") return 1;
+                    result.Clear();
+                    if (Setup.PreviousTasks(result, false, "legacy") != "") return 1;
                     scope.SetValue("UninstallString", Path.Combine(root, "Codex.exe"));
                     Reject(() => Setup.ReadRegistrations(hive, false, new[] { "legacy" }, result));
                 }
