@@ -10,14 +10,14 @@ diff --git a/build/win32/code.iss b/build/win32/code.iss
  WizardImageFile="{#RepoDir}\resources\win32\inno-big-100.bmp,{#RepoDir}\resources\win32\inno-big-125.bmp,{#RepoDir}\resources\win32\inno-big-150.bmp,{#RepoDir}\resources\win32\inno-big-175.bmp,{#RepoDir}\resources\win32\inno-big-200.bmp,{#RepoDir}\resources\win32\inno-big-225.bmp,{#RepoDir}\resources\win32\inno-big-250.bmp"
  WizardSmallImageFile="{#RepoDir}\resources\win32\inno-small-100.bmp,{#RepoDir}\resources\win32\inno-small-125.bmp,{#RepoDir}\resources\win32\inno-small-150.bmp,{#RepoDir}\resources\win32\inno-small-175.bmp,{#RepoDir}\resources\win32\inno-small-200.bmp,{#RepoDir}\resources\win32\inno-small-225.bmp,{#RepoDir}\resources\win32\inno-small-250.bmp"
  SetupIconFile={#RepoDir}\resources\win32\code.ico
-@@ -1305,6 +1305,121 @@
+@@ -1305,6 +1305,133 @@
  end;
  
  // Don't allow installing conflicting architectures
 +var
 +  PlanFile, Launcher, Session: String;
 +  ScopePage: TInputOptionWizardPage;
-+  PlanComplete, ScopeAuthorized: Boolean;
++  PlanComplete, ScopeAuthorized, CleanupPending: Boolean;
 +  Progress: TOutputMarqueeProgressWizardPage;
 +  RunAfter: TNewCheckBox;
 +
@@ -76,7 +76,7 @@ diff --git a/build/win32/code.iss b/build/win32/code.iss
 +end;
 +
 +function NextButtonClick(CurPageID: Integer): Boolean;
-+var Scope: String;
++var Scope: String; Details: TArrayOfString; I: Integer;
 +begin
 +  Result := True;
 +  if PlanFile = '' then Exit;
@@ -91,9 +91,21 @@ diff --git a/build/win32/code.iss b/build/win32/code.iss
 +    Progress.Show;
 +    try
 +      Progress.Animate;
-+      PlanComplete := Request('install', WizardSelectedTasks(False));
++      if CleanupPending then PlanComplete := Request('cleanup', WizardSelectedTasks(False))
++      else PlanComplete := Request('install', WizardSelectedTasks(False));
 +    finally
 +      Progress.Hide;
++    end;
++    if not PlanComplete and FileExists(PlanFile + '.cleanup') then begin
++      CleanupPending := True;
++      WizardForm.PageNameLabel.Caption := 'Previous installation cleanup incomplete';
++      WizardForm.PageDescriptionLabel.Caption := 'The replacement was installed. Review the cleanup error below.';
++      WizardForm.ReadyLabel.Caption := 'Close any running copies of Codex and retry. Exiting now may leave two installations.';
++      WizardForm.ReadyMemo.Lines.Clear;
++      if LoadStringsFromFile(PlanFile + '.cleanup', Details) then
++        for I := 0 to GetArrayLength(Details) - 1 do WizardForm.ReadyMemo.Lines.Add(Details[I]);
++      WizardForm.BackButton.Hide;
++      WizardForm.NextButton.Caption := 'Retry cleanup';
 +    end;
 +    if PlanComplete then begin
 +      WizardForm.PageNameLabel.Caption := 'Completing the Codex Setup Wizard';
@@ -132,7 +144,7 @@ diff --git a/build/win32/code.iss b/build/win32/code.iss
  function InitializeSetup(): Boolean;
  var
    RegKey: String;
-@@ -1328,7 +1443,8 @@
+@@ -1328,7 +1455,8 @@
        #define IncompatibleArchRootKey "HKLM64"
      #endif
  
@@ -142,7 +154,7 @@ diff --git a/build/win32/code.iss b/build/win32/code.iss
        RegKey := 'SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\' + copy('{#IncompatibleTargetAppId}', 2, 38) + '_is1';
  
        if RegKeyExists({#IncompatibleArchRootKey}, RegKey) then begin
-@@ -1407,6 +1523,7 @@
+@@ -1407,6 +1535,7 @@
  // called before the wizard checks for running application
  function PrepareToInstall(var NeedsRestart: Boolean): String;
  begin

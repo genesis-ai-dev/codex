@@ -76,11 +76,16 @@ internal static partial class Setup {
 
     private static void RemoveOld(Installation old) {
         var item = Inventory(old.Machine).SingleOrDefault(i => i.Id == old.Id && Equal(i.Root, old.Root));
-        if (item == null) return;
+        if (item == null) {
+            if (File.Exists(Path.Combine(old.Root, "Codex.exe")))
+                throw new IOException("The previous copy still exists but its uninstaller is no longer registered: " + old.Root);
+            return;
+        }
         if (!Equal(item.Uninstaller, old.Uninstaller) || Directory.Exists(Path.Combine(item.Root, "data")) ||
             (item.Machine && !TrustedMachineRoot(item.Root))) throw new IOException("Installation changed during setup.");
         Launch(item.Uninstaller, "/VERYSILENT /SUPPRESSMSGBOXES /NORESTART", false);
-        if (File.Exists(Path.Combine(old.Root, "Codex.exe"))) throw new IOException("Previous installation still exists: " + old.Root);
+        if (File.Exists(Path.Combine(old.Root, "Codex.exe")) || Inventory(old.Machine).Any(i => i.Id == old.Id && Equal(i.Root, old.Root)))
+            throw new IOException("Previous installation still exists: " + old.Root);
     }
 
     [DllImport("kernel32.dll", SetLastError = true)]
@@ -111,10 +116,18 @@ internal static partial class Setup {
                     InstallScope(true, tasks);
                     output.Write("ok"); output.Flush();
                 }
-                if (input.ReadString() != "cleanup") return 2;
-                foreach (var item in old) RemoveOld(item);
-                if (install && old.Count > 0) InstallScope(true, tasks);
-                output.Write("ok"); output.Flush();
+                while (true) {
+                    if (input.ReadString() != "cleanup") return 2;
+                    try {
+                        foreach (var item in old) RemoveOld(item);
+                        if (install && old.Count > 0) InstallScope(true, tasks);
+                    } catch (Exception e) {
+                        output.Write(e.Message); output.Flush();
+                        continue;
+                    }
+                    output.Write("ok"); output.Flush();
+                    break;
+                }
             } catch (EndOfStreamException) { return 2; }
             catch (Exception e) { output.Write(e.Message); output.Flush(); return 1; }
         }
@@ -189,7 +202,7 @@ internal static partial class Setup {
                 using (var pipe = Server(token, false))
                 using (var ui = Process.Start(new ProcessStartInfo(wizard, "/SP- /CodexPlan=\"" + plan + "\"") { UseShellExecute = false })) {
                     bool? choice = null;
-                    bool complete = false;
+                    bool complete = false, installed = false, machineClean = false;
                     string dest = null;
                     List<Installation> old = null;
                     while (AcceptWhileRunning(pipe, ui)) {
@@ -198,10 +211,10 @@ internal static partial class Setup {
                         string command = input.ReadString(), value = input.ReadString();
                         int code = 1;
                         try {
-                            if (command == "release" && !complete) {
+                            if (command == "release" && !installed) {
                                 if (admin != null) { admin.Dispose(); admin = null; }
                                 choice = null; code = 0;
-                            } else if (command == "scope" && !complete) {
+                            } else if (command == "scope" && !installed) {
                                 if (admin != null) { admin.Dispose(); admin = null; }
                                 choice = null;
                                 string[] scope = value.Split(',');
@@ -223,18 +236,21 @@ internal static partial class Setup {
                                 if (machine || old.Any(i => i.Machine)) admin = new Elevation(machine, new IntPtr(Int64.Parse(scope[1])));
                                 choice = machine;
                                 code = 0;
-                            } else if (command == "install" && choice.HasValue && !complete) {
+                            } else if ((command == "install" || command == "cleanup") && choice.HasValue && !complete && installed == (command == "cleanup")) {
                                 bool machine = choice.Value;
-                                TaskArgs(value);
-                                var inventory = Inventory();
-                                if (!Equal(dest, Destination(inventory, machine)) ||
-                                    !old.Select(i => i.Uninstaller).SequenceEqual(inventory.Where(i => i.Id != ScopeId(machine)).Select(i => i.Uninstaller),
-                                        StringComparer.OrdinalIgnoreCase)) throw new IOException("Installations changed. Run setup again.");
-                                ValidatePlan(inventory, ScopeId(machine), dest);
-                                if (machine) admin.Run("install", value); else InstallScope(false, value);
+                                if (!installed) {
+                                    TaskArgs(value);
+                                    var inventory = Inventory();
+                                    if (!Equal(dest, Destination(inventory, machine)) ||
+                                        !old.Select(i => i.Uninstaller).SequenceEqual(inventory.Where(i => i.Id != ScopeId(machine)).Select(i => i.Uninstaller),
+                                            StringComparer.OrdinalIgnoreCase)) throw new IOException("Installations changed. Run setup again.");
+                                    ValidatePlan(inventory, ScopeId(machine), dest);
+                                    if (machine) admin.Run("install", value); else InstallScope(false, value);
+                                    installed = true;
+                                }
                                 VerifyProduct(dest, machine, config["version"]);
                                 foreach (var item in old.Where(i => !i.Machine)) RemoveOld(item);
-                                if (admin != null) admin.Run("cleanup");
+                                if (admin != null && !machineClean) { admin.Run("cleanup"); machineClean = true; }
                                 if (!machine && old.Any(i => !i.Machine)) InstallScope(false, value);
                                 var final = Inventory();
                                 if (final.Count != 1 || final[0].Id != ScopeId(machine) || !Equal(final[0].Root, dest))
@@ -244,17 +260,23 @@ internal static partial class Setup {
                                 Process.Start(new ProcessStartInfo(Path.Combine(dest, "Codex.exe")) { UseShellExecute = false });
                                 code = 0;
                             }
-                        } catch (System.ComponentModel.Win32Exception e) {
-                            // Windows reports 1223 for Cancel, 5 for access denied, and 1260
-                            // when policy denies a standard user's elevation request.
-                            if (e.NativeErrorCode == 1223 || e.NativeErrorCode == 5 || e.NativeErrorCode == 1260) code = 2; else MessageBox.Show(e.Message, title);
-                        } catch (Exception e) { MessageBox.Show(e.Message, title); }
+                        } catch (Exception e) {
+                            if (installed && !complete) {
+                                File.WriteAllText(plan + ".cleanup", e.Message, System.Text.Encoding.UTF8);
+                                code = 3;
+                            } else {
+                                var win = e as System.ComponentModel.Win32Exception;
+                                // Windows reports 1223 for Cancel, 5 for access denied, and 1260
+                                // when policy denies a standard user's elevation request.
+                                if (win != null && (win.NativeErrorCode == 1223 || win.NativeErrorCode == 5 || win.NativeErrorCode == 1260)) code = 2; else MessageBox.Show(e.Message, title);
+                            }
+                        }
                         output.Write(code); output.Flush();
                         input.ReadBoolean(); pipe.Disconnect();
                     }
                     return complete ? 0 : 2;
                 }
             } finally { File.Delete(wizard); }
-        } finally { if (admin != null) admin.Dispose(); File.Delete(plan + ".migration"); File.Delete(plan); }
+        } finally { if (admin != null) admin.Dispose(); File.Delete(plan + ".cleanup"); File.Delete(plan + ".migration"); File.Delete(plan); }
     }
 }
