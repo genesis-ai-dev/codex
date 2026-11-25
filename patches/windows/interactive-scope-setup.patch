@@ -10,7 +10,7 @@ diff --git a/build/win32/code.iss b/build/win32/code.iss
  WizardImageFile="{#RepoDir}\resources\win32\inno-big-100.bmp,{#RepoDir}\resources\win32\inno-big-125.bmp,{#RepoDir}\resources\win32\inno-big-150.bmp,{#RepoDir}\resources\win32\inno-big-175.bmp,{#RepoDir}\resources\win32\inno-big-200.bmp,{#RepoDir}\resources\win32\inno-big-225.bmp,{#RepoDir}\resources\win32\inno-big-250.bmp"
  WizardSmallImageFile="{#RepoDir}\resources\win32\inno-small-100.bmp,{#RepoDir}\resources\win32\inno-small-125.bmp,{#RepoDir}\resources\win32\inno-small-150.bmp,{#RepoDir}\resources\win32\inno-small-175.bmp,{#RepoDir}\resources\win32\inno-small-200.bmp,{#RepoDir}\resources\win32\inno-small-225.bmp,{#RepoDir}\resources\win32\inno-small-250.bmp"
  SetupIconFile={#RepoDir}\resources\win32\code.ico
-@@ -1305,6 +1305,166 @@
+@@ -1305,6 +1305,224 @@
  end;
  
  // Don't allow installing conflicting architectures
@@ -21,7 +21,10 @@ diff --git a/build/win32/code.iss b/build/win32/code.iss
 +  DefaultsButton: TNewButton;
 +  ScopePage: TInputOptionWizardPage;
 +  PlanComplete, ScopeAuthorized, CleanupPending: Boolean;
-+  Progress: TOutputMarqueeProgressWizardPage;
++  Progress: TOutputProgressWizardPage;
++  ProgressFile: TSetupForm;
++  TimerID: LongWord;
++  Reporting, Displaying: Boolean;
 +  RunAfter: TNewCheckBox;
 +
 +function ScopeSetupMutex(Value: String): String;
@@ -47,12 +50,63 @@ diff --git a/build/win32/code.iss b/build/win32/code.iss
 +  UpdateDefaultsButton(nil);
 +end;
 +
-+procedure InitializeWizard();
++function PutWindowValue(W: HWND; Name: String; Value: Integer): Boolean;
++  external 'SetPropW@user32.dll stdcall';
++function WindowValue(W: HWND; Name: String): Integer;
++  external 'GetPropW@user32.dll stdcall';
++function ReadCaption(W: HWND; Buffer: String; Count: Integer): Integer;
++  external 'GetWindowTextW@user32.dll stdcall';
++function StartTimer(W: HWND; ID, Interval: LongWord; Callback: LongWord): LongWord;
++  external 'SetTimer@user32.dll stdcall';
++function StopTimer(W: HWND; ID: LongWord): Boolean;
++  external 'KillTimer@user32.dll stdcall';
++
++procedure CurInstallProgressChanged(CurProgress, MaxProgress: Integer);
 +begin
++  if not Reporting then Exit;
++  ProgressFile.Caption := WizardForm.FilenameLabel.Caption;
++  PutWindowValue(WizardForm.Handle, 'CodexMaximum', MaxProgress);
++  PutWindowValue(WizardForm.Handle, 'CodexPosition', CurProgress);
++end;
++
++procedure RefreshProgress(W: HWND; Msg, ID, Time: LongWord);
++var Worker: HWND; Maximum, Position, N: Integer; Filename: String;
++begin
++  if Displaying then Exit;
++  Displaying := True;
++  try
++    Worker := FindWindowByWindowName('Codex Setup Progress ' + Session);
++    Maximum := WindowValue(Worker, 'CodexMaximum');
++    if Maximum > 0 then begin
++      Position := WindowValue(Worker, 'CodexPosition');
++      SetLength(Filename, 1024);
++      N := ReadCaption(WindowValue(Worker, 'CodexFile'), Filename, Length(Filename));
++      SetLength(Filename, N);
++      if Filename <> '' then Progress.SetText(SetupMessage(msgStatusExtractFiles), Filename)
++      else Progress.SetText('Installing Codex...', '');
++      Progress.SetProgress(Position, Maximum);
++    end else if Progress.ProgressBar.Position > 0 then
++      Progress.SetText('Finishing setup...', '');
++  finally
++    Displaying := False;
++  end;
++end;
++
++procedure InitializeWizard();
++var Channel: String;
++begin
++  Channel := ExpandConstant('{param:CodexProgress|}');
++  if WizardSilent and (Channel <> '') then begin
++    ProgressFile := CreateCustomForm;
++    WizardForm.Caption := 'Codex Setup Progress ' + Channel;
++    PutWindowValue(WizardForm.Handle, 'CodexFile', ProgressFile.Handle);
++    Reporting := True;
++  end;
 +#if "user" == InstallTarget
 +  PlanFile := ExpandConstant('{param:CodexPlan|}');
 +  if PlanFile <> '' then begin
 +    if IsAdmin then RaiseException('Start Codex Setup from your normal Windows session.');
++    WizardForm.Caption := 'Setup - Codex';
 +    Launcher := GetIniString('setup', 'launcher', '', PlanFile);
 +    Session := GetIniString('setup', 'session', '', PlanFile);
 +    ScopePage := CreateInputOptionPage(wpLicense, 'Select Installation Scope',
@@ -67,7 +121,7 @@ diff --git a/build/win32/code.iss b/build/win32/code.iss
 +    WizardForm.TasksList.Height := WizardForm.TasksList.Height - ScaleY(32);
 +    WizardForm.TasksList.OnClickCheck := @UpdateDefaultsButton;
 +    DefaultsButton.OnClick := @RestoreTaskDefaults;
-+    Progress := CreateOutputMarqueeProgressPage('Installing Codex', 'Please wait while Setup installs Codex.');
++    Progress := CreateOutputProgressPage('Installing Codex', 'Please wait while Setup installs Codex.');
 +  end;
 +#endif
 +end;
@@ -123,10 +177,14 @@ diff --git a/build/win32/code.iss b/build/win32/code.iss
 +    if PlanComplete then Exit;
 +    Progress.Show;
 +    try
-+      Progress.Animate;
++      if CleanupPending then Progress.SetText('Removing the previous installation...', '')
++      else Progress.SetText('Preparing the installation...', '');
++      Progress.SetProgress(0, 1);
++      TimerID := StartTimer(0, 0, 150, CreateCallback(@RefreshProgress));
 +      if CleanupPending then PlanComplete := Request('cleanup', WizardSelectedTasks(False))
 +      else PlanComplete := Request('install', WizardSelectedTasks(False));
 +    finally
++      StopTimer(0, TimerID);
 +      Progress.Hide;
 +    end;
 +    if not PlanComplete and FileExists(PlanFile + '.cleanup') then begin
@@ -177,7 +235,7 @@ diff --git a/build/win32/code.iss b/build/win32/code.iss
  function InitializeSetup(): Boolean;
  var
    RegKey: String;
-@@ -1328,7 +1488,8 @@
+@@ -1328,7 +1546,8 @@
        #define IncompatibleArchRootKey "HKLM64"
      #endif
  
@@ -187,7 +245,7 @@ diff --git a/build/win32/code.iss b/build/win32/code.iss
        RegKey := 'SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\' + copy('{#IncompatibleTargetAppId}', 2, 38) + '_is1';
  
        if RegKeyExists({#IncompatibleArchRootKey}, RegKey) then begin
-@@ -1407,6 +1568,7 @@
+@@ -1407,6 +1626,7 @@
  // called before the wizard checks for running application
  function PrepareToInstall(var NeedsRestart: Boolean): String;
  begin

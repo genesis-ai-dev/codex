@@ -68,12 +68,15 @@ internal static partial class Setup {
         return " /MERGETASKS=\"" + String.Join(",", Choices.Select(n => names.Contains(n) ? n : "!" + n)) + ",!runcode\"";
     }
 
+    private static string progressSession = "";
+
     private static void InstallScope(bool machine, string tasks) {
         var inventory = Inventory(machine);
         var dest = Destination(inventory, machine);
         ValidatePlan(inventory, ScopeId(machine), dest);
         if (machine && !TrustedMachineRoot(dest)) throw new IOException("Unverified machine destination.");
         var flags = WizardFlags(dest) + " /VERYSILENT" + TaskArgs(tasks);
+        if (progressSession.Length != 0) flags += " /CodexProgress=" + Guid.ParseExact(progressSession, "N").ToString("N");
         // Use Program Files for elevated extraction. A standard user must not
         // be able to replace the executable between reconstruction and launch.
         string temp = Path.Combine(machine ? Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles) :
@@ -140,6 +143,7 @@ internal static partial class Setup {
                 if (install) {
                     if (input.ReadString() != "install") return 2;
                     tasks = input.ReadString();
+                    progressSession = input.ReadString();
                     InstallScope(true, tasks);
                     output.Write("ok"); output.Flush();
                 }
@@ -192,7 +196,7 @@ internal static partial class Setup {
 
         internal void Run(string command, string tasks = null) {
             output.Write(command);
-            if (tasks != null) output.Write(tasks);
+            if (tasks != null) { output.Write(tasks); output.Write(progressSession); }
             output.Flush();
             string answer = input.ReadString();
             if (answer != "ok") throw new IOException(answer);
@@ -219,6 +223,7 @@ internal static partial class Setup {
     private static int Interactive(Assembly assembly, List<Installation> initial) {
         string plan = Path.GetTempFileName();
         string token = Guid.NewGuid().ToString("N");
+        progressSession = token;
         Elevation admin = null;
         try {
             File.WriteAllLines(plan, new[] { "[setup]", "default=" + (DefaultMachineScope(initial) ? "1" : "0"),
@@ -257,7 +262,10 @@ internal static partial class Setup {
                                 string id = ScopeId(machine);
                                 ValidatePlan(inventory, id, dest);
                                 old = inventory.Where(i => i.Id != id).ToList();
-                                var review = new List<string>();
+                                var target = inventory.SingleOrDefault(i => i.Id == id);
+                                var group = target == null || String.IsNullOrEmpty(target.IconGroup) ? config["group"] : target.IconGroup;
+                                var review = new List<string> { "Destination location:", "    " + dest, "",
+                                    "Start Menu folder:", "    " + (target != null && target.NoIcons ? "(none)" : group) };
                                 if (old.Count > 0) {
                                     review.Add("Install and verify the new copy in " + dest + ", then uninstall:");
                                     review.AddRange(old.Select(i => "    " + (i.Machine ? "All Users" : "Current User") + " - " + i.Root));
