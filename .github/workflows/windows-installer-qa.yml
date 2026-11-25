@@ -22,15 +22,30 @@ jobs:
             build/win32
       - uses: actions/download-artifact@v4
         with:
-          name: Codex-Windows-x64-enforce-test
-          run-id: 44174974157
+          name: Codex-scope-installer-x64
+          run-id: 45481313906
           github-token: ${{ github.token }}
           path: previous
+      - name: Recover application files from the previous verified QA installer
+        shell: powershell
+        run: |
+          $previous = Get-Item previous/CodexInstall-*.exe
+          if ((Get-FileHash $previous).Hash -ne ((Get-Content previous/installer.sha256) -split ' ')[0]) { throw 'Previous package checksum mismatch' }
+          $payload = "$env:TEMP\codex-qa-user.exe"
+          $assembly = [Reflection.Assembly]::LoadFile($previous.FullName)
+          $inputFile = $assembly.GetManifestResourceStream('user')
+          $output = [IO.File]::Create($payload)
+          try { $inputFile.CopyTo($output) } finally { $inputFile.Dispose(); $output.Dispose() }
+          $dir = "$env:TEMP\codex-qa-restore"
+          $proc = Start-Process $payload -ArgumentList "/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /NOICONS /TASKS= /DIR=`"$dir`"" -Wait -PassThru
+          if ($proc.ExitCode) { throw 'Could not restore QA payload' }
+          Copy-Item $dir VSCode-win32-x64 -Recurse
+          Remove-Item VSCode-win32-x64/unins*.*
+          $proc = Start-Process "$dir\unins000.exe" -ArgumentList '/VERYSILENT /NORESTART' -Wait -PassThru
+          if ($proc.ExitCode) { throw 'Could not clean up temporary installation' }
       - name: Restore verified application and prepare the shipping Inno script
         shell: bash
         run: |
-          (cd previous && sha256sum -c SHA256SUMS.txt)
-          unzip -q previous/Codex-Windows-x64-25e74e4-enforce-test.zip
           cp -r src/stable/resources vscode/
           cp LICENSE vscode/LICENSE.txt
           ./build/windows/rtf/make.sh
