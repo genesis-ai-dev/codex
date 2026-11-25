@@ -16,7 +16,8 @@ using Microsoft.Win32;
 internal static partial class Setup {
     internal sealed class Installation {
         internal string Id, Root, Uninstaller, SelectedTasks, DeselectedTasks;
-        internal bool Machine;
+        internal bool Machine, NoIcons;
+        internal string IconGroup;
     }
 
     private const string Product = "Codex.Codex";
@@ -114,6 +115,8 @@ internal static partial class Setup {
                     throw new IOException("Unverified uninstaller in " + root);
                 if (!found.Any(i => i.Id == id && Equal(i.Root, root)))
                     found.Add(new Installation { Machine = machine, Id = id, Root = root, Uninstaller = exe,
+                        IconGroup = key.GetValue("Inno Setup: Icon Group") as string,
+                        NoIcons = key.GetValue("Inno Setup: No Icons") != null,
                         SelectedTasks = key.GetValue("Inno Setup: Selected Tasks") as string,
                         DeselectedTasks = key.GetValue("Inno Setup: Deselected Tasks") as string });
             }

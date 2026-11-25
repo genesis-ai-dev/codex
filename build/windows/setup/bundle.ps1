@@ -7,7 +7,7 @@ param(
 $ErrorActionPreference = 'Stop'
 $product = Get-Content -LiteralPath $ProductPath -Raw | ConvertFrom-Json
 if ($product.win32AppUserModelId -ne 'Codex.Codex') { throw 'Expected the stable Codex Translation Editor product.' }
-$config = @{ arch = $Arch; version = $Version }
+$config = @{ arch = $Arch; version = $Version; group = $product.nameLong }
 foreach ($prefix in 'win32','win32x64','win32arm64') {
     foreach ($suffix in 'UserAppId','AppId') {
         $field = $prefix + $suffix
