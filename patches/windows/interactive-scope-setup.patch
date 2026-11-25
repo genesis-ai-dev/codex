@@ -149,7 +149,7 @@ diff --git a/build/win32/code.iss b/build/win32/code.iss
 +    Launcher := GetIniString('setup', 'launcher', '', PlanFile);
 +    Session := GetIniString('setup', 'session', '', PlanFile);
 +    ScopePage := CreateInputOptionPage(wpLicense, 'Select Installation Scope',
-+      'Who should Codex be installed for?', 'Choose who can use Codex. Changing scope replaces the existing copy and may require administrator access.', True, False);
++      'Who should Codex be installed for?', 'Setup keeps the selected scope and removes other installed copies.', True, False);
 +    ScopePage.Add(GetIniString('setup', 'userLabel', 'Current User', PlanFile));
 +    ScopePage.Add(GetIniString('setup', 'systemLabel', 'All Users', PlanFile));
 +    ScopePage.SelectedValueIndex := GetIniInt('setup', 'default', 0, 0, 1, PlanFile);

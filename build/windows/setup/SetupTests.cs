@@ -37,13 +37,13 @@ internal static class SetupTests {
             user.Version = "1.9";
             system.Version = "2.10";
             var both = new List<Setup.Installation> { system, user };
-            if (!Setup.ScopeLabel(both, false).Contains("Version 1.9") || !Setup.ScopeLabel(both, true).Contains("Version 2.10")) return 1;
+            if (Setup.ScopeLabel(both, false) != "Current User (installed: 1.9)" || Setup.ScopeLabel(both, true) != "All Users (installed: 2.10)") return 1;
             foreach (var inventory in new[] { new List<Setup.Installation>(), registered,
                 new List<Setup.Installation> {system}, both }) {
                 foreach (bool machine in new[] {false, true}) {
                     string label = Setup.ScopeLabel(inventory, machine);
-                    if (label.Contains("currently installed") != inventory.Any(i => i.Machine == machine) ||
-                        inventory.Where(i => i.Machine == machine).Any(i => !label.Contains(i.Root))) return 1;
+                    if (label.Contains("(installed:") != inventory.Any(i => i.Machine == machine) ||
+                        inventory.Where(i => i.Machine == machine).Any(i => label.Contains(i.Root))) return 1;
                 }
             }
             // A double-click must open Inno's license, tasks and ready pages with its own task defaults.
@@ -99,7 +99,7 @@ internal static class SetupTests {
                     result.Clear();
                     scope.DeleteValue("DisplayVersion");
                     Setup.ReadRegistrations(hive, false, new[] { "legacy" }, result);
-                    if (!Setup.ScopeLabel(result, false).Contains("Version unknown")) return 1;
+                    if (!Setup.ScopeLabel(result, false).Contains("version unknown")) return 1;
                     scope.SetValue("UninstallString", Path.Combine(root, "Codex.exe"));
                     Reject(() => Setup.ReadRegistrations(hive, false, new[] { "legacy" }, result));
                 }
