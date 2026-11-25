@@ -34,7 +34,10 @@ internal static class SetupTests {
             var user = registered[0];
             var system = new Setup.Installation { Id = "system", Machine = true,
                 Root = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "Codex") };
+            user.Version = "1.9";
+            system.Version = "2.10";
             var both = new List<Setup.Installation> { system, user };
+            if (!Setup.ScopeLabel(both, false).Contains("Version 1.9") || !Setup.ScopeLabel(both, true).Contains("Version 2.10")) return 1;
             foreach (var inventory in new[] { new List<Setup.Installation>(), registered,
                 new List<Setup.Installation> {system}, both }) {
                 foreach (bool machine in new[] {false, true}) {
@@ -72,13 +75,14 @@ internal static class SetupTests {
                     string uninstaller = Path.Combine(root, "unins000.exe");
                     File.WriteAllText(uninstaller, "");
                     scope.SetValue("InstallLocation", root);
+                    scope.SetValue("DisplayVersion", "legacy-version");
                     scope.SetValue("UninstallString", "\"" + uninstaller + "\"");
                     scope.SetValue("Inno Setup: Selected Tasks", "desktopicon,obsolete");
                     scope.SetValue("Inno Setup: Deselected Tasks", "addtopath");
                     var result = new List<Setup.Installation>();
                     Setup.ReadRegistrations(hive, false, new[] { "legacy" }, result);
                     Setup.ReadRegistrations(hive, false, new[] { "legacy" }, result);
-                    if (result.Count != 1 || Setup.DefaultMachineScope(result)) return 1;
+                    if (result.Count != 1 || result[0].Version != "1" || Setup.DefaultMachineScope(result)) return 1;
                     if (Setup.PreviousTasks(result, true, "system") != "desktopicon,!addtopath") return 1;
                     var machine = new Setup.Installation { Machine = true, Id = "system",
                         SelectedTasks = "", DeselectedTasks = "desktopicon,associatewithfiles,addtopath" };
@@ -89,6 +93,13 @@ internal static class SetupTests {
                     if (Setup.PreviousTasks(result, false, "legacy") != "!desktopicon,!associatewithfiles,!addtopath") return 1;
                     result.Clear();
                     if (Setup.PreviousTasks(result, false, "legacy") != "") return 1;
+                    File.WriteAllText(file, File.ReadAllText(file).Replace(",\"version\":\"1\"", ""));
+                    Setup.ReadRegistrations(hive, false, new[] { "legacy" }, result);
+                    if (result.Single().Version != "legacy-version") return 1;
+                    result.Clear();
+                    scope.DeleteValue("DisplayVersion");
+                    Setup.ReadRegistrations(hive, false, new[] { "legacy" }, result);
+                    if (!Setup.ScopeLabel(result, false).Contains("Version unknown")) return 1;
                     scope.SetValue("UninstallString", Path.Combine(root, "Codex.exe"));
                     Reject(() => Setup.ReadRegistrations(hive, false, new[] { "legacy" }, result));
                 }
