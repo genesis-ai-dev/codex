@@ -70,13 +70,13 @@ internal static partial class Setup {
 
     private static string progressSession = "";
 
-    private static void InstallScope(bool machine, string tasks) {
+    private static void InstallScope(bool machine, string tasks, bool repair = false) {
         var inventory = Inventory(machine);
         var dest = Destination(inventory, machine);
         ValidatePlan(inventory, ScopeId(machine), dest);
         if (machine && !TrustedMachineRoot(dest)) throw new IOException("Unverified machine destination.");
         var flags = WizardFlags(dest) + " /VERYSILENT" + TaskArgs(tasks);
-        if (progressSession.Length != 0) flags += " /CodexProgress=" + Guid.ParseExact(progressSession, "N").ToString("N");
+        if (!repair && progressSession.Length != 0) flags += " /CodexProgress=" + Guid.ParseExact(progressSession, "N").ToString("N");
         // Use Program Files for elevated extraction. A standard user must not
         // be able to replace the executable between reconstruction and launch.
         string temp = Path.Combine(machine ? Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles) :
@@ -85,7 +85,11 @@ internal static partial class Setup {
             try { WritePayload(Assembly.GetExecutingAssembly(), machine, file); }
             catch { file.Close(); File.Delete(temp); throw; }
         }
-        try { Launch(temp, flags, false); } finally { File.Delete(temp); }
+        try {
+            int result = RunSetup(temp, flags, false);
+            if (!repair && result == 5) throw new OperationCanceledException();
+            RequireSuccess(result);
+        } finally { File.Delete(temp); }
         VerifyProduct(dest, machine, config["version"]);
         if (!Inventory(machine).Any(i => i.Id == ScopeId(machine) && Equal(i.Root, dest)))
             throw new IOException("New installation was not registered. Previous copies were kept.");
@@ -151,7 +155,7 @@ internal static partial class Setup {
                     if (input.ReadString() != "cleanup") return 2;
                     try {
                         foreach (var item in old) RemoveOld(item);
-                        if (install && old.Count > 0) InstallScope(true, tasks);
+                        if (install && old.Count > 0) InstallScope(true, tasks, true);
                     } catch (Exception e) {
                         output.Write(e.Message); output.Flush();
                         continue;
@@ -160,6 +164,7 @@ internal static partial class Setup {
                     break;
                 }
             } catch (EndOfStreamException) { return 2; }
+            catch (OperationCanceledException) { output.Write("cancelled"); output.Flush(); return 2; }
             catch (Exception e) { output.Write(e.Message); output.Flush(); return 1; }
         }
         return 0;
@@ -199,6 +204,7 @@ internal static partial class Setup {
             if (tasks != null) { output.Write(tasks); output.Write(progressSession); }
             output.Flush();
             string answer = input.ReadString();
+            if (answer == "cancelled") throw new OperationCanceledException();
             if (answer != "ok") throw new IOException(answer);
         }
 
@@ -291,7 +297,7 @@ internal static partial class Setup {
                                 VerifyProduct(dest, machine, config["version"]);
                                 foreach (var item in old.Where(i => !i.Machine)) RemoveOld(item);
                                 if (admin != null && !machineClean) { admin.Run("cleanup"); machineClean = true; }
-                                if (!machine && old.Any(i => !i.Machine)) InstallScope(false, value);
+                                if (!machine && old.Any(i => !i.Machine)) InstallScope(false, value, true);
                                 var final = Inventory();
                                 if (final.Count != 1 || final[0].Id != ScopeId(machine) || !Equal(final[0].Root, dest))
                                     throw new IOException("Installation verification failed.");
@@ -300,6 +306,11 @@ internal static partial class Setup {
                                 Process.Start(new ProcessStartInfo(Path.Combine(dest, "Codex.exe")) { UseShellExecute = false });
                                 code = 0;
                             }
+                        } catch (OperationCanceledException) {
+                            File.WriteAllText(plan + ".cancelled", "");
+                            if (admin != null) { admin.Dispose(); admin = null; }
+                            choice = null;
+                            code = 2;
                         } catch (Exception e) {
                             if (installed && !complete) {
                                 File.WriteAllText(plan + ".cleanup", e.Message, System.Text.Encoding.UTF8);
@@ -317,6 +328,6 @@ internal static partial class Setup {
                     return complete ? 0 : 2;
                 }
             } finally { File.Delete(wizard); }
-        } finally { if (admin != null) admin.Dispose(); File.Delete(plan + ".cleanup"); File.Delete(plan + ".migration"); File.Delete(plan); }
+        } finally { if (admin != null) admin.Dispose(); File.Delete(plan + ".cancelled"); File.Delete(plan + ".cleanup"); File.Delete(plan + ".migration"); File.Delete(plan); }
     }
 }
