@@ -154,10 +154,10 @@ internal static partial class Setup {
     }
 
     internal static string ScopeLabel(List<Installation> installed, bool machine) {
-        var paths = installed.Where(i => i.Machine == machine).Select(i => i.VersionLabel + " - " + i.Root)
+        var versions = installed.Where(i => i.Machine == machine).Select(i => i.Version ?? "version unknown")
             .Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
         string name = machine ? "All Users" : "Current User";
-        return paths.Length == 0 ? name : name + " (currently installed)\n" + String.Join("\n", paths);
+        return versions.Length == 0 ? name : name + " (installed: " + String.Join(", ", versions) + ")";
     }
 
     private static string Destination(List<Installation> installed, bool machine) {

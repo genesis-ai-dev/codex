@@ -233,7 +233,7 @@ internal static partial class Setup {
         Elevation admin = null;
         try {
             File.WriteAllLines(plan, new[] { "[setup]", "default=" + (DefaultMachineScope(initial) ? "1" : "0"),
-                "systemLabel=" + ScopeLabel(initial,true).Replace("\n"," - "), "userLabel=" + ScopeLabel(initial,false).Replace("\n"," - "),
+                "systemLabel=" + ScopeLabel(initial, true), "userLabel=" + ScopeLabel(initial, false),
                 "userTasks=" + PreviousTasks(initial, false, ScopeId(false)),
                 "systemTasks=" + PreviousTasks(initial, true, ScopeId(true)),
                 "userDir=" + Destination(initial, false), "systemDir=" + Destination(initial, true),
