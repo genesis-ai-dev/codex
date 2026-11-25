@@ -72,54 +72,63 @@ if ($PlannedInstall) {
         ($controls | Where-Object { $_.Text -match '^Next(?: >)?$' } | Select-Object -First 1).Click()
     }
     try {
-        $controls = Wait-Page 'License Agreement'
-        Press $controls 'I accept the agreement'
-        Next-Page $controls
-        $controls = Wait-Page 'Select Installation Scope'
-        $list = $controls | Where-Object Class -eq TNewCheckListBox | Select-Object -First 1
-        $list.Key(35); $list.Key(32) # End, Space: All Users
-        Start-Sleep -Milliseconds 300
-        Next-Page $controls
-        Start-Sleep -Seconds 3
-        $controls = Wait-Page 'Select Installation Scope'
-        $list.Key(36); $list.Key(32) # Home, Space: Current User
-        Start-Sleep -Milliseconds 300
-        Next-Page $controls
-        $controls = Wait-Page 'Select Additional Tasks'
-        $defaults = $controls | Where-Object Text -eq 'Restore defaults'
-        if (!$defaults -or $defaults.Enabled) { throw 'Restore should start disabled at defaults' }
-        $tasks = $controls | Where-Object Class -eq TNewCheckListBox | Select-Object -First 1
-        $tasks.Key(35); $tasks.Key(32)
-        Start-Sleep -Milliseconds 300
-        if (!$defaults.Enabled) { throw 'Changing a task should enable Restore' }
-        $defaults.Click()
-        Start-Sleep -Milliseconds 300
-        if ($defaults.Enabled) { throw 'Restoring defaults should disable Restore' }
-        $tasks.Key(35); $tasks.Key(32)
-        Start-Sleep -Milliseconds 300
-        if (!$defaults.Enabled) { throw 'Expected a non-default task before going back' }
-        ($controls | Where-Object { $_.Text -match 'Back$' } | Select-Object -First 1).Click()
-        $controls = Wait-Page 'Select Installation Scope'
-        Next-Page $controls
-        $controls = Wait-Page 'Select Additional Tasks'
-        if (($controls | Where-Object Text -eq 'Restore defaults').Enabled) { throw 'Back did not reset tasks' }
-        Next-Page $controls
-        $controls = Wait-Page 'Ready to Install'
-        $window = [WizardWindow]::Visible([IntPtr]::Zero) | Where-Object Handle -eq $script:wizardHandle
-        if ($window.Text -ne 'Setup - Codex') { throw "Unexpected setup title: $($window.Text)" }
-        $summary = ($controls.Text -join [Environment]::NewLine)
-        if (!$summary.Contains("$env:LOCALAPPDATA\Programs\Codex") -or $summary -notmatch 'Start Menu folder:\s+Codex') {
-            throw "Missing target or Start Menu folder in summary: $summary"
+        foreach ($cancel in @($true, $false)) {
+            $controls = Wait-Page 'License Agreement'
+            Press $controls 'I accept the agreement'
+            Next-Page $controls
+            $controls = Wait-Page 'Select Installation Scope'
+            $list = $controls | Where-Object Class -eq TNewCheckListBox | Select-Object -First 1
+            $list.Key(35); $list.Key(32) # End, Space: All Users
+            Start-Sleep -Milliseconds 300
+            Next-Page $controls
+            Start-Sleep -Seconds 3
+            $controls = Wait-Page 'Select Installation Scope'
+            $list.Key(36); $list.Key(32) # Home, Space: Current User
+            Start-Sleep -Milliseconds 300
+            Next-Page $controls
+            $controls = Wait-Page 'Select Additional Tasks'
+            $defaults = $controls | Where-Object Text -eq 'Restore defaults'
+            if (!$defaults -or $defaults.Enabled) { throw 'Restore should start disabled at defaults' }
+            $tasks = $controls | Where-Object Class -eq TNewCheckListBox | Select-Object -First 1
+            $tasks.Key(35); $tasks.Key(32)
+            Start-Sleep -Milliseconds 300
+            if (!$defaults.Enabled) { throw 'Changing a task should enable Restore' }
+            $defaults.Click()
+            Start-Sleep -Milliseconds 300
+            if ($defaults.Enabled) { throw 'Restoring defaults should disable Restore' }
+            $tasks.Key(35); $tasks.Key(32)
+            Start-Sleep -Milliseconds 300
+            if (!$defaults.Enabled) { throw 'Expected a non-default task before going back' }
+            ($controls | Where-Object { $_.Text -match 'Back$' } | Select-Object -First 1).Click()
+            $controls = Wait-Page 'Select Installation Scope'
+            Next-Page $controls
+            $controls = Wait-Page 'Select Additional Tasks'
+            if (($controls | Where-Object Text -eq 'Restore defaults').Enabled) { throw 'Back did not reset tasks' }
+            Next-Page $controls
+            $controls = Wait-Page 'Ready to Install'
+            $window = [WizardWindow]::Visible([IntPtr]::Zero) | Where-Object Handle -eq $script:wizardHandle
+            if ($window.Text -ne 'Setup - Codex') { throw "Unexpected setup title: $($window.Text)" }
+            $summary = ($controls.Text -join [Environment]::NewLine)
+            if (!$summary.Contains("$env:LOCALAPPDATA\Programs\Codex") -or $summary -notmatch 'Start Menu folder:\s+Codex') {
+                throw "Missing target or Start Menu folder in summary: $summary"
+            }
+            Press $controls 'Install'
+            $deadline = [DateTime]::UtcNow.AddMinutes(2)
+            do {
+                Start-Sleep -Milliseconds 100
+                $progress = [WizardWindow]::Visible($script:wizardHandle)
+                $filename = $progress.Text | Where-Object { $_ -like "$env:LOCALAPPDATA\Programs\Codex\*" }
+                if ($filename) { break }
+            } while (!$child.HasExited -and $progress.Text -notcontains 'Completing the Codex Setup Wizard' -and [DateTime]::UtcNow -lt $deadline)
+            if (!$filename) { throw "Wizard never showed the extraction filename. Last controls: $($progress.Text -join ', ')" }
+            if ($cancel) {
+                Press $progress 'Cancel'
+                if (!$child.WaitForExit(45000) -or $child.ExitCode -ne 2) { throw 'Setup did not acknowledge and finish cancellation' }
+                if (Test-Path "$env:LOCALAPPDATA\Programs\Codex\Codex.exe") { throw 'Cancelled extraction left an installed executable' }
+                $script:wizardHandle = $null
+                $child = Start-Process $Package -PassThru
+            }
         }
-        Press $controls 'Install'
-        $deadline = [DateTime]::UtcNow.AddMinutes(2)
-        do {
-            Start-Sleep -Milliseconds 100
-            $progress = [WizardWindow]::Visible($script:wizardHandle)
-            $filename = $progress.Text | Where-Object { $_ -like "$env:LOCALAPPDATA\Programs\Codex\*" }
-            if ($filename) { break }
-        } while (!$child.HasExited -and $progress.Text -notcontains 'Completing the Codex Setup Wizard' -and [DateTime]::UtcNow -lt $deadline)
-        if (!$filename) { throw "Wizard never showed the extraction filename. Last controls: $($progress.Text -join ', ')" }
         $controls = Wait-Page 'Completing the Codex Setup Wizard'
         Press $controls 'Launch Codex' # uncheck
         Press $controls 'Finish'
