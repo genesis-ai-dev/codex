@@ -10,7 +10,7 @@ diff --git a/build/win32/code.iss b/build/win32/code.iss
  WizardImageFile="{#RepoDir}\resources\win32\inno-big-100.bmp,{#RepoDir}\resources\win32\inno-big-125.bmp,{#RepoDir}\resources\win32\inno-big-150.bmp,{#RepoDir}\resources\win32\inno-big-175.bmp,{#RepoDir}\resources\win32\inno-big-200.bmp,{#RepoDir}\resources\win32\inno-big-225.bmp,{#RepoDir}\resources\win32\inno-big-250.bmp"
  WizardSmallImageFile="{#RepoDir}\resources\win32\inno-small-100.bmp,{#RepoDir}\resources\win32\inno-small-125.bmp,{#RepoDir}\resources\win32\inno-small-150.bmp,{#RepoDir}\resources\win32\inno-small-175.bmp,{#RepoDir}\resources\win32\inno-small-200.bmp,{#RepoDir}\resources\win32\inno-small-225.bmp,{#RepoDir}\resources\win32\inno-small-250.bmp"
  SetupIconFile={#RepoDir}\resources\win32\code.ico
-@@ -1305,6 +1305,224 @@
+@@ -1305,6 +1305,269 @@
  end;
  
  // Don't allow installing conflicting architectures
@@ -24,7 +24,9 @@ diff --git a/build/win32/code.iss b/build/win32/code.iss
 +  Progress: TOutputProgressWizardPage;
 +  ProgressFile: TSetupForm;
 +  TimerID: LongWord;
-+  Reporting, Displaying: Boolean;
++  Reporting, Displaying, CancelRequested, Applying: Boolean;
++  CancelSignal: TSetupForm;
++  Channel: String;
 +  RunAfter: TNewCheckBox;
 +
 +function ScopeSetupMutex(Value: String): String;
@@ -64,6 +66,17 @@ diff --git a/build/win32/code.iss b/build/win32/code.iss
 +procedure CurInstallProgressChanged(CurProgress, MaxProgress: Integer);
 +begin
 +  if not Reporting then Exit;
++  if not CancelRequested and (CurProgress < MaxProgress) and
++     (FindWindowByWindowName('Codex Cancel ' + Channel) <> 0) then begin
++    CancelRequested := True;
++    { Inno only accepts a native Close during extraction on a visible form.
++      Keep the silent worker off screen while it starts its normal rollback. }
++    WizardForm.Left := -32000;
++    WizardForm.Top := -32000;
++    WizardForm.Show;
++    WizardForm.Close;
++    WizardForm.Hide;
++  end;
 +  ProgressFile.Caption := WizardForm.FilenameLabel.Caption;
 +  PutWindowValue(WizardForm.Handle, 'CodexMaximum', MaxProgress);
 +  PutWindowValue(WizardForm.Handle, 'CodexPosition', CurProgress);
@@ -77,6 +90,12 @@ diff --git a/build/win32/code.iss b/build/win32/code.iss
 +  try
 +    Worker := FindWindowByWindowName('Codex Setup Progress ' + Session);
 +    Maximum := WindowValue(Worker, 'CodexMaximum');
++    WizardForm.CancelButton.Enabled := not CancelRequested and (Maximum > 0) and
++      (WindowValue(Worker, 'CodexPosition') < Maximum);
++    if CancelRequested then begin
++      Progress.SetText('Waiting for setup to cancel...', '');
++      Exit;
++    end;
 +    if Maximum > 0 then begin
 +      Position := WindowValue(Worker, 'CodexPosition');
 +      SetLength(Filename, 1024);
@@ -93,7 +112,6 @@ diff --git a/build/win32/code.iss b/build/win32/code.iss
 +end;
 +
 +procedure InitializeWizard();
-+var Channel: String;
 +begin
 +  Channel := ExpandConstant('{param:CodexProgress|}');
 +  if WizardSilent and (Channel <> '') then begin
@@ -175,7 +193,11 @@ diff --git a/build/win32/code.iss b/build/win32/code.iss
 +  end else if CurPageID = wpReady then begin
 +    Result := False;
 +    if PlanComplete then Exit;
++    CancelRequested := False;
++    Applying := True;
 +    Progress.Show;
++    WizardForm.CancelButton.Visible := True;
++    WizardForm.CancelButton.Enabled := False;
 +    try
 +      if CleanupPending then Progress.SetText('Removing the previous installation...', '')
 +      else Progress.SetText('Preparing the installation...', '');
@@ -185,7 +207,14 @@ diff --git a/build/win32/code.iss b/build/win32/code.iss
 +      else PlanComplete := Request('install', WizardSelectedTasks(False));
 +    finally
 +      StopTimer(0, TimerID);
++      Applying := False;
++      if CancelRequested then CancelSignal.Free;
 +      Progress.Hide;
++    end;
++    if CancelRequested and not PlanComplete and FileExists(PlanFile + '.cancelled') then begin
++      DeleteFile(PlanFile + '.cancelled');
++      WizardForm.ReadyLabel.Caption := 'Installation cancelled. Click Back to review your choices or Cancel to exit.';
++      Exit;
 +    end;
 +    if not PlanComplete and FileExists(PlanFile + '.cleanup') then begin
 +      CleanupPending := True;
@@ -219,6 +248,22 @@ diff --git a/build/win32/code.iss b/build/win32/code.iss
 +
 +procedure CancelButtonClick(CurPageID: Integer; var Cancel, Confirm: Boolean);
 +begin
++  if Reporting and CancelRequested then begin
++    Confirm := False;
++    Exit;
++  end;
++  if Applying then begin
++    Cancel := False;
++    Confirm := False;
++    if not CancelRequested and WizardForm.CancelButton.Enabled then begin
++      CancelRequested := True;
++      WizardForm.CancelButton.Enabled := False;
++      CancelSignal := CreateCustomForm;
++      CancelSignal.Caption := 'Codex Cancel ' + Session;
++      PutWindowValue(CancelSignal.Handle, 'CodexCancel', 1);
++    end;
++    Exit;
++  end;
 +  if PlanComplete then begin
 +    if RunAfter.Checked then Request('launch', '');
 +    Cancel := True;
@@ -235,7 +280,7 @@ diff --git a/build/win32/code.iss b/build/win32/code.iss
  function InitializeSetup(): Boolean;
  var
    RegKey: String;
-@@ -1328,7 +1546,8 @@
+@@ -1328,7 +1591,8 @@
        #define IncompatibleArchRootKey "HKLM64"
      #endif
  
@@ -245,7 +290,7 @@ diff --git a/build/win32/code.iss b/build/win32/code.iss
        RegKey := 'SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\' + copy('{#IncompatibleTargetAppId}', 2, 38) + '_is1';
  
        if RegKeyExists({#IncompatibleArchRootKey}, RegKey) then begin
-@@ -1407,6 +1626,7 @@
+@@ -1407,6 +1671,7 @@
  // called before the wizard checks for running application
  function PrepareToInstall(var NeedsRestart: Boolean): String;
  begin
