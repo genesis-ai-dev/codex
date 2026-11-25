@@ -105,7 +105,21 @@ if ($PlannedInstall) {
         if (($controls | Where-Object Text -eq 'Restore defaults').Enabled) { throw 'Back did not reset tasks' }
         Next-Page $controls
         $controls = Wait-Page 'Ready to Install'
+        $window = [WizardWindow]::Visible([IntPtr]::Zero) | Where-Object Handle -eq $script:wizardHandle
+        if ($window.Text -ne 'Setup - Codex') { throw "Unexpected setup title: $($window.Text)" }
+        $summary = ($controls.Text -join [Environment]::NewLine)
+        if (!$summary.Contains("$env:LOCALAPPDATA\Programs\Codex") -or $summary -notmatch 'Start Menu folder:\s+Codex') {
+            throw "Missing target or Start Menu folder in summary: $summary"
+        }
         Press $controls 'Install'
+        $deadline = [DateTime]::UtcNow.AddMinutes(2)
+        do {
+            Start-Sleep -Milliseconds 100
+            $progress = [WizardWindow]::Visible($script:wizardHandle)
+            $filename = $progress.Text | Where-Object { $_ -like "$env:LOCALAPPDATA\Programs\Codex\*" }
+            if ($filename) { break }
+        } while (!$child.HasExited -and $progress.Text -notcontains 'Completing the Codex Setup Wizard' -and [DateTime]::UtcNow -lt $deadline)
+        if (!$filename) { throw "Wizard never showed the extraction filename. Last controls: $($progress.Text -join ', ')" }
         $controls = Wait-Page 'Completing the Codex Setup Wizard'
         Press $controls 'Launch Codex' # uncheck
         Press $controls 'Finish'
