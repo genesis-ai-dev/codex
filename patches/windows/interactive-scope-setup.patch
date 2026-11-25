@@ -10,11 +10,18 @@ diff --git a/build/win32/code.iss b/build/win32/code.iss
  WizardImageFile="{#RepoDir}\resources\win32\inno-big-100.bmp,{#RepoDir}\resources\win32\inno-big-125.bmp,{#RepoDir}\resources\win32\inno-big-150.bmp,{#RepoDir}\resources\win32\inno-big-175.bmp,{#RepoDir}\resources\win32\inno-big-200.bmp,{#RepoDir}\resources\win32\inno-big-225.bmp,{#RepoDir}\resources\win32\inno-big-250.bmp"
  WizardSmallImageFile="{#RepoDir}\resources\win32\inno-small-100.bmp,{#RepoDir}\resources\win32\inno-small-125.bmp,{#RepoDir}\resources\win32\inno-small-150.bmp,{#RepoDir}\resources\win32\inno-small-175.bmp,{#RepoDir}\resources\win32\inno-small-200.bmp,{#RepoDir}\resources\win32\inno-small-225.bmp,{#RepoDir}\resources\win32\inno-small-250.bmp"
  SetupIconFile={#RepoDir}\resources\win32\code.ico
-@@ -1305,6 +1305,273 @@
+@@ -1305,6 +1305,314 @@
  end;
  
  // Don't allow installing conflicting architectures
++type
++  TShellExecuteInfo = record
++    Size, Mask, Owner: LongWord;
++    Verb, FileName, Parameters, Directory: String;
++    Show, Instance, IDList, ClassName, ClassKey, HotKey, Icon, Process: LongWord;
++  end;
 +var
++  WorkProcess: LongWord;
 +  PlanFile, Launcher, Session: String;
 +  DefaultTasks: String;
 +  TasksInitialized: Boolean;
@@ -82,12 +89,26 @@ diff --git a/build/win32/code.iss b/build/win32/code.iss
 +  PutWindowValue(WizardForm.Handle, 'CodexPosition', CurProgress);
 +end;
 +
++function StartProcess(var Info: TShellExecuteInfo): Boolean;
++  external 'ShellExecuteExW@shell32.dll stdcall';
++function GetProcessResult(Process: LongWord; var Code: LongWord): Boolean;
++  external 'GetExitCodeProcess@kernel32.dll stdcall';
++function CloseProcessHandle(Process: LongWord): Boolean;
++  external 'CloseHandle@kernel32.dll stdcall';
++
++procedure FinishWork(Success: Boolean); forward;
++
 +procedure RefreshProgress(W: HWND; Msg, ID, Time: LongWord);
-+var Worker: HWND; Maximum, Position, N: Integer; Filename: String;
++var Worker: HWND; Maximum, Position, N: Integer; Filename: String; Code: LongWord;
 +begin
-+  if Displaying then Exit;
++  if Displaying or (WorkProcess = 0) then Exit;
 +  Displaying := True;
 +  try
++    if not GetProcessResult(WorkProcess, Code) then Code := 1;
++    if Code <> 259 then begin
++      FinishWork(Code = 0);
++      Exit;
++    end;
 +    Worker := FindWindowByWindowName('Codex Setup Progress ' + Session);
 +    Maximum := WindowValue(Worker, 'CodexMaximum');
 +    WizardForm.CancelButton.Enabled := not CancelRequested and (Maximum > 0) and
@@ -180,40 +201,19 @@ diff --git a/build/win32/code.iss b/build/win32/code.iss
 +  end;
 +end;
 +
-+function NextButtonClick(CurPageID: Integer): Boolean;
-+var Scope: String; Details: TArrayOfString; I: Integer;
++procedure FinishWork(Success: Boolean);
++var Details: TArrayOfString; I: Integer;
 +begin
-+  Result := True;
-+  if PlanFile = '' then Exit;
-+  if CurPageID = ScopePage.ID then begin
-+    if ScopePage.SelectedValueIndex = 1 then Scope := 'system' else Scope := 'user';
-+    Result := Request('scope', Scope + ',' + IntToStr(WizardForm.Handle));
-+    ScopeAuthorized := Result;
-+    if Result then WizardForm.DirEdit.Text := GetIniString('setup', Scope + 'Dir', '', PlanFile);
-+  end else if CurPageID = wpReady then begin
-+    Result := False;
-+    if PlanComplete then Exit;
-+    CancelRequested := False;
-+    Applying := True;
-+    Progress.Show;
-+    WizardForm.CancelButton.Visible := True;
-+    WizardForm.CancelButton.Enabled := False;
-+    try
-+      if CleanupPending then Progress.SetText('Removing the previous installation...', '')
-+      else Progress.SetText('Preparing the installation...', '');
-+      Progress.SetProgress(0, 1);
-+      TimerID := StartTimer(0, 0, 150, CreateCallback(@RefreshProgress));
-+      if CleanupPending then PlanComplete := Request('cleanup', WizardSelectedTasks(False))
-+      else PlanComplete := Request('install', WizardSelectedTasks(False));
-+    finally
-+      StopTimer(0, TimerID);
-+      Applying := False;
-+      if CancelRequested then CancelSignal.Free;
-+      Progress.Hide;
-+    end;
++    StopTimer(0, TimerID);
++    CloseProcessHandle(WorkProcess);
++    WorkProcess := 0;
++    Applying := False;
++    if CancelRequested then CancelSignal.Free;
++    PlanComplete := Success;
++    Progress.Hide;
 +    if CancelRequested and not PlanComplete and FileExists(PlanFile + '.cancelled') then begin
 +      DeleteFile(PlanFile + '.cancelled');
-+      PostMessage(WizardForm.CancelButton.Handle, $00F5, 0, 0);
++      PostMessage(WizardForm.Handle, $0010, 0, 0);
 +      Exit;
 +    end;
 +    if not PlanComplete and FileExists(PlanFile + '.cleanup') then begin
@@ -243,6 +243,47 @@ diff --git a/build/win32/code.iss b/build/win32/code.iss
 +      WizardForm.CancelButton.Default := True;
 +      WizardForm.ActiveControl := WizardForm.CancelButton;
 +    end;
++end;
++
++function NextButtonClick(CurPageID: Integer): Boolean;
++var Scope: String; Info: TShellExecuteInfo; Command: String;
++begin
++  Result := True;
++  if PlanFile = '' then Exit;
++  if CurPageID = ScopePage.ID then begin
++    if ScopePage.SelectedValueIndex = 1 then Scope := 'system' else Scope := 'user';
++    Result := Request('scope', Scope + ',' + IntToStr(WizardForm.Handle));
++    ScopeAuthorized := Result;
++    if Result then WizardForm.DirEdit.Text := GetIniString('setup', Scope + 'Dir', '', PlanFile);
++  end else if CurPageID = wpReady then begin
++    Result := False;
++    if PlanComplete then Exit;
++    CancelRequested := False;
++    Applying := True;
++    Progress.Show;
++    WizardForm.CancelButton.Visible := True;
++    WizardForm.CancelButton.Enabled := False;
++    if CleanupPending then begin
++      Command := 'cleanup';
++      Progress.SetText('Removing the previous installation...', '');
++    end else begin
++      Command := 'install';
++      Progress.SetText('Preparing the installation...', '');
++    end;
++    Progress.SetProgress(0, 1);
++    Info.Size := SizeOf(Info);
++    Info.Mask := $40;
++    Info.Owner := WizardForm.Handle;
++    Info.FileName := Launcher;
++    Info.Parameters := '/wizard-request ' + Session + ' ' + Command + ' "' + WizardSelectedTasks(False) + '"';
++    TimerID := StartTimer(0, 0, 150, CreateCallback(@RefreshProgress));
++    if (TimerID = 0) or not StartProcess(Info) then begin
++      if TimerID <> 0 then StopTimer(0, TimerID);
++      Applying := False;
++      Progress.Hide;
++      RaiseException('Could not start the installation request.');
++    end;
++    WorkProcess := Info.Process;
 +  end;
 +end;
 +
@@ -284,7 +325,7 @@ diff --git a/build/win32/code.iss b/build/win32/code.iss
  function InitializeSetup(): Boolean;
  var
    RegKey: String;
-@@ -1328,7 +1595,8 @@
+@@ -1328,7 +1636,8 @@
        #define IncompatibleArchRootKey "HKLM64"
      #endif
  
@@ -294,7 +335,7 @@ diff --git a/build/win32/code.iss b/build/win32/code.iss
        RegKey := 'SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\' + copy('{#IncompatibleTargetAppId}', 2, 38) + '_is1';
  
        if RegKeyExists({#IncompatibleArchRootKey}, RegKey) then begin
-@@ -1407,6 +1675,7 @@
+@@ -1407,6 +1716,7 @@
  // called before the wizard checks for running application
  function PrepareToInstall(var NeedsRestart: Boolean): String;
  begin
