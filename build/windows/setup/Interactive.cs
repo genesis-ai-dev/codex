@@ -270,11 +270,12 @@ internal static partial class Setup {
                                 old = inventory.Where(i => i.Id != id).ToList();
                                 var target = inventory.SingleOrDefault(i => i.Id == id);
                                 var group = target == null || String.IsNullOrEmpty(target.IconGroup) ? config["group"] : target.IconGroup;
-                                var review = new List<string> { "Destination location:", "    " + dest, "",
+                                var review = new List<string> { "Version to install: " + config["version"], "Destination location:", "    " + dest, "",
                                     "Start Menu folder:", "    " + (target != null && target.NoIcons ? "(none)" : group) };
+                                if (target != null) review.Add("Currently installed here: " + target.VersionLabel);
                                 if (old.Count > 0) {
                                     review.Add("Install and verify the new copy in " + dest + ", then uninstall:");
-                                    review.AddRange(old.Select(i => "    " + (i.Machine ? "All Users" : "Current User") + " - " + i.Root));
+                                    review.AddRange(old.Select(i => "    " + (i.Machine ? "All Users" : "Current User") + " - " + i.VersionLabel + " - " + i.Root));
                                     if (!machine && old.Any(i => i.Machine))
                                         review.Add("Other Windows accounts will lose access to the All Users installation.");
                                 }

@@ -17,7 +17,8 @@ internal static partial class Setup {
     internal sealed class Installation {
         internal string Id, Root, Uninstaller, SelectedTasks, DeselectedTasks;
         internal bool Machine, NoIcons;
-        internal string IconGroup;
+        internal string IconGroup, Version;
+        internal string VersionLabel { get { return Version == null ? "Version unknown" : "Version " + Version; } }
     }
 
     private const string Product = "Codex.Codex";
@@ -79,12 +80,13 @@ internal static partial class Setup {
         return data.TryGetValue(name, out value) ? value as string : null;
     }
 
-    internal static void VerifyProduct(string root, bool machine, string expectedVersion = null) {
+    internal static string VerifyProduct(string root, bool machine, string expectedVersion = null) {
         var manifest = Json.Deserialize<Dictionary<string, object>>(File.ReadAllText(Path.Combine(root, @"resources\app\product.json")));
         if (Field(manifest, "win32AppUserModelId") != Product || Field(manifest, "applicationName") != "codex" ||
             (expectedVersion != null && Field(manifest, "version") != expectedVersion) ||
             Field(manifest, "target") != (machine ? "system" : "user") || !File.Exists(Path.Combine(root, "Codex.exe")))
             throw new IOException("Could not verify the Codex Translation Editor installation in " + root);
+        return Field(manifest, "version");
     }
 
     private static List<Installation> Inventory(bool machineOnly = false) {
@@ -107,14 +109,15 @@ internal static partial class Setup {
             using (var key = uninstall.OpenSubKey(id + "_is1")) {
                 if (key == null) continue;
                 string root = FullDir(key.GetValue("InstallLocation") as string);
-                VerifyProduct(root, machine);
+                string version = DisplayableVersion(VerifyProduct(root, machine)) ??
+                    DisplayableVersion(key.GetValue("DisplayVersion") as string);
                 string exe = (key.GetValue("UninstallString") as string ?? "").Trim('"');
                 if (!Equal(Path.GetDirectoryName(exe), root) ||
                     !System.Text.RegularExpressions.Regex.IsMatch(Path.GetFileName(exe), @"^unins[0-9]{3}\.exe$", System.Text.RegularExpressions.RegexOptions.IgnoreCase) ||
                     !File.Exists(exe) || (File.GetAttributes(exe) & FileAttributes.ReparsePoint) != 0)
                     throw new IOException("Unverified uninstaller in " + root);
                 if (!found.Any(i => i.Id == id && Equal(i.Root, root)))
-                    found.Add(new Installation { Machine = machine, Id = id, Root = root, Uninstaller = exe,
+                    found.Add(new Installation { Machine = machine, Id = id, Root = root, Uninstaller = exe, Version = version,
                         IconGroup = key.GetValue("Inno Setup: Icon Group") as string,
                         NoIcons = key.GetValue("Inno Setup: No Icons") != null,
                         SelectedTasks = key.GetValue("Inno Setup: Selected Tasks") as string,
@@ -146,8 +149,12 @@ internal static partial class Setup {
         return installed.Any(i => i.Machine);
     }
 
+    private static string DisplayableVersion(string version) {
+        return String.IsNullOrWhiteSpace(version) || version.Any(Char.IsControl) ? null : version.Trim();
+    }
+
     internal static string ScopeLabel(List<Installation> installed, bool machine) {
-        var paths = installed.Where(i => i.Machine == machine).Select(i => i.Root)
+        var paths = installed.Where(i => i.Machine == machine).Select(i => i.VersionLabel + " - " + i.Root)
             .Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
         string name = machine ? "All Users" : "Current User";
         return paths.Length == 0 ? name : name + " (currently installed)\n" + String.Join("\n", paths);
