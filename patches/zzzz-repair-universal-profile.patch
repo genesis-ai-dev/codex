@@ -1,0 +1,132 @@
+diff --git a/src/vs/platform/extensionManagement/common/extensionsProfileScannerService.ts b/src/vs/platform/extensionManagement/common/extensionsProfileScannerService.ts
+index 60b4525..b4ca8b2 100644
+--- a/src/vs/platform/extensionManagement/common/extensionsProfileScannerService.ts
++++ b/src/vs/platform/extensionManagement/common/extensionsProfileScannerService.ts
+@@ -11,7 +11,7 @@ import { ResourceMap } from '../../../base/common/map.js';
+ import { URI, UriComponents } from '../../../base/common/uri.js';
+ import { Metadata, isIExtensionIdentifier } from './extensionManagement.js';
+ import { areSameExtensions } from './extensionManagementUtil.js';
+-import { IExtension, IExtensionIdentifier } from '../../extensions/common/extensions.js';
++import { IExtension, IExtensionIdentifier, TargetPlatform } from '../../extensions/common/extensions.js';
+ import { FileOperationResult, IFileService, toFileOperationResult } from '../../files/common/files.js';
+ import { createDecorator } from '../../instantiation/common/instantiation.js';
+ import { ILogService } from '../../log/common/log.js';
+@@ -266,6 +266,14 @@ export abstract class AbstractExtensionsProfileScannerService extends Disposable
+ 							e.relativeLocation = relativePath;
+ 						}
+ 					}
++					const repaired = await this.resolveStaleUniversalLocation(e, location);
++					if (repaired) {
++						location = repaired;
++						e.location = repaired.toJSON();
++						e.relativeLocation = this.toRelativePath(repaired);
++						if (e.metadata && !e.relativeLocation?.endsWith('-universal')) { delete e.metadata.targetPlatform; }
++						migrate = true;
++					}
+ 					if (isUndefined(e.metadata?.hasPreReleaseVersion) && e.metadata?.preRelease) {
+ 						migrate = true;
+ 						e.metadata.hasPreReleaseVersion = true;
+@@ -301,6 +309,42 @@ export abstract class AbstractExtensionsProfileScannerService extends Disposable
+ 		});
+ 	}
+ 
++	/** A universal VSIX may already be installed under the unsuffixed directory name. */
++	private async resolveStaleUniversalLocation(entry: IStoredProfileExtension, location: URI): Promise<URI | undefined> {
++		const extUri = this.uriIdentityService.extUri;
++		const basename = extUri.basename(location);
++		const expected = entry.identifier.id.toLowerCase() + '-' + entry.version;
++		const moved = !this.toRelativePath(location);
++		if (location.scheme !== this.extensionsLocation.scheme || location.authority !== this.extensionsLocation.authority ||
++			(basename !== expected + '-universal' && !(moved && basename === expected)) ||
++			(entry.metadata?.targetPlatform && entry.metadata.targetPlatform !== TargetPlatform.UNIVERSAL)) {
++			return undefined;
++		}
++		try {
++			await this.fileService.stat(extUri.joinPath(location, 'package.json'));
++			return undefined;
++		} catch (error) {
++			if (toFileOperationResult(error) !== FileOperationResult.FILE_NOT_FOUND) { return undefined; }
++		}
++		// An absolute-only profile entry may predate a change of account or extensions directory.
++		// Resolve replacements exclusively inside this instance's configured extension store.
++		const names = moved ? [basename, basename === expected ? expected + '-universal' : expected] : [expected];
++		for (const name of names) {
++			const candidate = this.resolveExtensionLocation(name);
++			try {
++				const file = await this.fileService.readFile(extUri.joinPath(candidate, 'package.json'));
++				const manifest = JSON.parse(file.value.toString());
++				if (typeof manifest.publisher === 'string' && typeof manifest.name === 'string'
++					&& (manifest.publisher + '.' + manifest.name).toLowerCase() === entry.identifier.id.toLowerCase()
++					&& manifest.version === entry.version
++					&& (!manifest.__metadata?.targetPlatform || manifest.__metadata.targetPlatform === TargetPlatform.UNIVERSAL)) {
++					return candidate;
++				}
++			} catch { /* Only use a verified replacement. */ }
++		}
++		return undefined;
++	}
++
+ 	private throwInvalidConentError(file: URI): void {
+ 		throw new ExtensionsProfileScanningError(`Invalid extensions content in ${file.toString()}`, ExtensionsProfileScanningErrorCode.ERROR_INVALID_CONTENT);
+ 	}
+diff --git a/src/vs/platform/extensionManagement/test/common/extensionsProfileScannerService.test.ts b/src/vs/platform/extensionManagement/test/common/extensionsProfileScannerService.test.ts
+index 7cecdfa..d6c8d76 100644
+--- a/src/vs/platform/extensionManagement/test/common/extensionsProfileScannerService.test.ts
++++ b/src/vs/platform/extensionManagement/test/common/extensionsProfileScannerService.test.ts
+@@ -50,6 +50,56 @@ suite('ExtensionsProfileScannerService', () => {
+ 
+ 	suiteTeardown(() => sinon.restore());
+ 
++	for (const scenario of ['stale universal', 'valid original', 'different version', 'architecture-specific replacement']) {
++		test('scan and persist universal extension location: ' + scenario, async () => {
++			const scanner = disposables.add(instantiationService.createInstance(TestObject, extensionsLocation));
++			const fs = instantiationService.get(IFileService);
++			const profile = joinPath(ROOT, 'profiles', 'test', 'extensions.json');
++			const base = 'frontier-rnd.frontier-authentication-0.11.0';
++			const original = joinPath(extensionsLocation, base + '-universal');
++			const replacement = joinPath(extensionsLocation, base);
++			const entry = { identifier: { id: 'frontier-rnd.frontier-authentication' }, location: original.toJSON(), relativeLocation: base + '-universal', version: '0.11.0', metadata: { targetPlatform: 'universal', pinned: true } };
++			const manifest = { publisher: 'frontier-rnd', name: 'frontier-authentication', version: scenario === 'different version' ? '0.12.0' : '0.11.0', __metadata: scenario === 'architecture-specific replacement' ? { targetPlatform: 'linux-arm64' } : {} };
++			await fs.writeFile(profile, VSBuffer.fromString(JSON.stringify([entry])));
++			await fs.writeFile(joinPath(replacement, 'package.json'), VSBuffer.fromString(JSON.stringify(manifest)));
++			if (scenario === 'valid original') { await fs.writeFile(joinPath(original, 'package.json'), VSBuffer.fromString(JSON.stringify(manifest))); }
++			const repair = scenario === 'stale universal';
++			for (let i = 0; i < 2; i++) {
++				const [extension] = await scanner.scanProfileExtensions(profile);
++				assert.strictEqual(extension.location.toString(), (repair ? replacement : original).toString());
++				const [stored] = JSON.parse((await fs.readFile(profile)).value.toString());
++				assert.strictEqual(stored.relativeLocation, repair ? base : base + '-universal');
++				assert.strictEqual(stored.location.path, extension.location.path);
++				assert.strictEqual(stored.metadata.targetPlatform, repair ? undefined : 'universal');
++				assert.strictEqual(stored.metadata.pinned, true);
++			}
++		});
++	}
++
++	for (const [oldRoot, activeRoot, oldSuffix, newSuffix] of [
++		['Users/previous/.codex/extensions', 'Users/current/.codex/extensions', '-universal', ''],
++		['C:/Users/previous/.codex/extensions', 'C:/Users/current/.codex/extensions', '', '-universal'],
++		['old-store', 'portable/custom-store', '-universal', '-universal'],
++	]) {
++		test('repair absolute-only profile in ' + activeRoot, async () => {
++			const active = joinPath(ROOT, activeRoot);
++			const scanner = disposables.add(instantiationService.createInstance(TestObject, active));
++			const fs = instantiationService.get(IFileService);
++			const profile = joinPath(ROOT, 'profiles', 'test', 'extensions.json');
++			const base = 'example.extension-1.0.0';
++			const entry = { identifier: { id: 'example.extension' }, version: '1.0.0',
++				location: joinPath(ROOT, oldRoot, base + oldSuffix).toJSON(), metadata: { pinned: true } };
++			const candidate = joinPath(active, base + newSuffix);
++			await fs.writeFile(profile, VSBuffer.fromString(JSON.stringify([entry])));
++			await fs.writeFile(joinPath(candidate, 'package.json'), VSBuffer.fromString(JSON.stringify({ publisher: 'example', name: 'extension', version: '1.0.0' })));
++			const [extension] = await scanner.scanProfileExtensions(profile);
++			assert.strictEqual(extension.location.toString(), candidate.toString());
++			const [stored] = JSON.parse((await fs.readFile(profile)).value.toString());
++			assert.strictEqual(stored.relativeLocation, base + newSuffix);
++			assert.strictEqual(stored.metadata.pinned, true);
++		});
++	}
++
+ 	test('write extensions located in the same extensions folder', async () => {
+ 		const testObject = disposables.add(instantiationService.createInstance(TestObject, extensionsLocation));
+ 

@@ -101,12 +101,7 @@ if [[ "${OS_NAME}" == "osx" ]]; then
     if [[ -z "${CERTIFICATE_OSX_P12_DATA}" ]]; then
       printf '%s\n' "${YELLOW}Warning: generating an unsigned macOS DMG because no Developer ID signing certificate is configured. Team members may see Gatekeeper warnings when opening it.${RESET}"
     fi
-    npx create-dmg ./*.app . || true
-    if ! ls ./*.dmg 1>/dev/null 2>&1; then
-      echo "Error: DMG creation failed — no .dmg file was produced" >&2
-      exit 1
-    fi
-    mv ./*.dmg "../assets/${APP_NAME}.${VSCODE_ARCH}.${RELEASE_VERSION}.dmg"
+    bash ../build/osx/dmg/build.sh ./*.app "../assets/${APP_NAME}.${VSCODE_ARCH}.${RELEASE_VERSION}.dmg"
     popd
   fi
 
@@ -162,6 +157,10 @@ elif [[ "${OS_NAME}" == "windows" ]]; then
   if [[ "${SHOULD_BUILD_EXE_USR}" != "no" ]]; then
     echo "Moving User EXE"
     mv "vscode\\.build\\win32-${VSCODE_ARCH}\\user-setup\\VSCodeSetup.exe" "assets\\${APP_NAME}UserSetup-${VSCODE_ARCH}-${RELEASE_VERSION}.exe"
+  fi
+
+  if [[ "${VSCODE_QUALITY:-stable}" == "stable" && "${SHOULD_BUILD_EXE_SYS}" != "no" && "${SHOULD_BUILD_EXE_USR}" != "no" && "${DEFER_SCOPE_INSTALLER:-no}" != "yes" ]]; then
+    powershell.exe -NoProfile -ExecutionPolicy Bypass -File build/windows/setup/bundle.ps1 -Arch "${VSCODE_ARCH}" -Version "${RELEASE_VERSION}"
   fi
 
   if [[ "${VSCODE_ARCH}" == "ia32" || "${VSCODE_ARCH}" == "x64" ]]; then

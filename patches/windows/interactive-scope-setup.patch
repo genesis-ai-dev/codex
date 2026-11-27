@@ -1,0 +1,354 @@
+diff --git a/build/win32/code.iss b/build/win32/code.iss
+--- a/build/win32/code.iss
++++ b/build/win32/code.iss
+@@ -19,7 +19,7 @@
+ Compression=lzma
+ SolidCompression=yes
+ AppMutex={code:GetAppMutex}
+-SetupMutex={#AppMutex}setup
++SetupMutex={code:ScopeSetupMutex}
+ WizardImageFile="{#RepoDir}\resources\win32\inno-big-100.bmp,{#RepoDir}\resources\win32\inno-big-125.bmp,{#RepoDir}\resources\win32\inno-big-150.bmp,{#RepoDir}\resources\win32\inno-big-175.bmp,{#RepoDir}\resources\win32\inno-big-200.bmp,{#RepoDir}\resources\win32\inno-big-225.bmp,{#RepoDir}\resources\win32\inno-big-250.bmp"
+ WizardSmallImageFile="{#RepoDir}\resources\win32\inno-small-100.bmp,{#RepoDir}\resources\win32\inno-small-125.bmp,{#RepoDir}\resources\win32\inno-small-150.bmp,{#RepoDir}\resources\win32\inno-small-175.bmp,{#RepoDir}\resources\win32\inno-small-200.bmp,{#RepoDir}\resources\win32\inno-small-225.bmp,{#RepoDir}\resources\win32\inno-small-250.bmp"
+ SetupIconFile={#RepoDir}\resources\win32\code.ico
+@@ -1305,6 +1305,323 @@
+ end;
+ 
+ // Don't allow installing conflicting architectures
++type
++  TShellExecuteInfo = record
++    Size, Mask, Owner: LongWord;
++    Verb, FileName, Parameters, Directory: String;
++    Show, Instance, IDList, ClassName, ClassKey, HotKey, Icon, Process: LongWord;
++  end;
++var
++  WorkProcess: LongWord;
++  PlanFile, Launcher, Session: String;
++  DefaultTasks: String;
++  TasksInitialized: Boolean;
++  DefaultsButton: TNewButton;
++  ScopePage: TInputOptionWizardPage;
++  PlanComplete, ScopeAuthorized, CleanupPending: Boolean;
++  Progress: TOutputProgressWizardPage;
++  ProgressFile: TSetupForm;
++  TimerID: LongWord;
++  Reporting, Displaying, CancelRequested, Applying: Boolean;
++  CancelSignal: TSetupForm;
++  Channel: String;
++  RunAfter: TNewCheckBox;
++
++function ScopeSetupMutex(Value: String): String;
++begin
++  if ExpandConstant('{param:CodexPlan|}') <> '' then Result := '{#AppMutex}wizard'
++  else Result := '{#AppMutex}setup';
++end;
++
++function FromScopeLauncher(): Boolean;
++begin
++  Result := ExpandConstant('{param:CodexScopeSetup|0}') = '1';
++end;
++
++procedure UpdateDefaultsButton(Sender: TObject);
++begin
++  DefaultsButton.Enabled := WizardSelectedTasks(False) <> DefaultTasks;
++end;
++
++procedure RestoreTaskDefaults(Sender: TObject);
++begin
++  WizardSelectTasks('!desktopicon,!quicklaunchicon,!addcontextmenufiles,!addcontextmenufolders,!associatewithfiles,!addtopath');
++  WizardSelectTasks(DefaultTasks);
++  UpdateDefaultsButton(nil);
++end;
++
++function PutWindowValue(W: HWND; Name: String; Value: Integer): Boolean;
++  external 'SetPropW@user32.dll stdcall';
++function WindowValue(W: HWND; Name: String): Integer;
++  external 'GetPropW@user32.dll stdcall';
++function ReadCaption(W: HWND; Buffer: String; Count: Integer): Integer;
++  external 'GetWindowTextW@user32.dll stdcall';
++function StartTimer(W: HWND; ID, Interval: LongWord; Callback: LongWord): LongWord;
++  external 'SetTimer@user32.dll stdcall';
++function StopTimer(W: HWND; ID: LongWord): Boolean;
++  external 'KillTimer@user32.dll stdcall';
++
++procedure CurInstallProgressChanged(CurProgress, MaxProgress: Integer);
++begin
++  if not Reporting then Exit;
++  if not CancelRequested and (CurProgress < MaxProgress) and
++     (FindWindowByWindowName('Codex Cancel ' + Channel) <> 0) then begin
++    CancelRequested := True;
++    { Inno only accepts a native Close during extraction on a visible form.
++      Keep the silent worker off screen while it starts its normal rollback. }
++    WizardForm.Left := -32000;
++    WizardForm.Top := -32000;
++    WizardForm.Show;
++    WizardForm.Close;
++    WizardForm.Hide;
++  end;
++  ProgressFile.Caption := WizardForm.FilenameLabel.Caption;
++  PutWindowValue(WizardForm.Handle, 'CodexMaximum', MaxProgress);
++  PutWindowValue(WizardForm.Handle, 'CodexPosition', CurProgress);
++end;
++
++function StartProcess(var Info: TShellExecuteInfo): Boolean;
++  external 'ShellExecuteExW@shell32.dll stdcall';
++function GetProcessResult(Process: LongWord; var Code: LongWord): Boolean;
++  external 'GetExitCodeProcess@kernel32.dll stdcall';
++function CloseProcessHandle(Process: LongWord): Boolean;
++  external 'CloseHandle@kernel32.dll stdcall';
++
++procedure FinishWork(Success: Boolean); forward;
++
++procedure RefreshProgress(W: HWND; Msg, ID, Time: LongWord);
++var Worker: HWND; Maximum, Position, N: Integer; Filename: String; Code: LongWord;
++begin
++  if Displaying or (WorkProcess = 0) then Exit;
++  Displaying := True;
++  try
++    if not GetProcessResult(WorkProcess, Code) then Code := 1;
++    if Code <> 259 then begin
++      FinishWork(Code = 0);
++      Exit;
++    end;
++    Worker := FindWindowByWindowName('Codex Setup Progress ' + Session);
++    Maximum := WindowValue(Worker, 'CodexMaximum');
++    WizardForm.CancelButton.Enabled := not CancelRequested and (Maximum > 0) and
++      (WindowValue(Worker, 'CodexPosition') < Maximum);
++    if CancelRequested then begin
++      Progress.SetText('Waiting for setup to cancel...', '');
++      Exit;
++    end;
++    if Maximum > 0 then begin
++      Position := WindowValue(Worker, 'CodexPosition');
++      SetLength(Filename, 1024);
++      N := ReadCaption(WindowValue(Worker, 'CodexFile'), Filename, Length(Filename));
++      SetLength(Filename, N);
++      if Filename <> '' then Progress.SetText(SetupMessage(msgStatusExtractFiles), Filename)
++      else Progress.SetText('Installing Codex...', '');
++      Progress.SetProgress(Position, Maximum);
++    end else if Progress.ProgressBar.Position > 0 then
++      Progress.SetText('Finishing setup...', '');
++  finally
++    Displaying := False;
++  end;
++end;
++
++procedure InitializeWizard();
++begin
++  Channel := ExpandConstant('{param:CodexProgress|}');
++  if WizardSilent and (Channel <> '') then begin
++    ProgressFile := CreateCustomForm;
++    WizardForm.Caption := 'Codex Setup Progress ' + Channel;
++    PutWindowValue(WizardForm.Handle, 'CodexFile', ProgressFile.Handle);
++    Reporting := True;
++  end;
++#if "user" == InstallTarget
++  PlanFile := ExpandConstant('{param:CodexPlan|}');
++  if PlanFile <> '' then begin
++    if IsAdmin then RaiseException('Start Codex Setup from your normal Windows session.');
++    WizardForm.Caption := 'Setup - Codex';
++    Launcher := GetIniString('setup', 'launcher', '', PlanFile);
++    Session := GetIniString('setup', 'session', '', PlanFile);
++    ScopePage := CreateInputOptionPage(wpLicense, 'Select Installation Scope',
++      'Who should Codex be installed for?', 'Setup keeps the selected scope and removes other installed copies.', True, False);
++    ScopePage.Add(GetIniString('setup', 'userLabel', 'Current User', PlanFile));
++    ScopePage.Add(GetIniString('setup', 'systemLabel', 'All Users', PlanFile));
++    ScopePage.SelectedValueIndex := GetIniInt('setup', 'default', 0, 0, 1, PlanFile);
++    DefaultsButton := TNewButton.Create(WizardForm);
++    DefaultsButton.Parent := WizardForm.TasksList.Parent;
++    DefaultsButton.Caption := 'Restore defaults';
++    DefaultsButton.SetBounds(WizardForm.TasksList.Left, WizardForm.TasksList.Top + WizardForm.TasksList.Height - ScaleY(24), ScaleX(104), ScaleY(24));
++    WizardForm.TasksList.Height := WizardForm.TasksList.Height - ScaleY(32);
++    WizardForm.TasksList.OnClickCheck := @UpdateDefaultsButton;
++    DefaultsButton.OnClick := @RestoreTaskDefaults;
++    Progress := CreateOutputProgressPage('Installing Codex', 'Please wait while Setup installs Codex.');
++  end;
++#endif
++end;
++
++function Request(Command, Value: String): Boolean;
++var Status: Integer;
++begin
++  Result := Exec(Launcher, '/wizard-request ' + Session + ' ' + Command + ' "' + Value + '"',
++    '', SW_HIDE, ewWaitUntilTerminated, Status) and (Status = 0);
++end;
++
++procedure CurPageChanged(CurPageID: Integer);
++var Review: TArrayOfString; I: Integer; Saved: String;
++begin
++  if PlanFile = '' then Exit;
++  if CurPageID = wpSelectTasks then begin
++    if ScopePage.SelectedValueIndex = 1 then Saved := GetIniString('setup', 'systemTasks', '', PlanFile)
++    else Saved := GetIniString('setup', 'userTasks', '', PlanFile);
++    if not TasksInitialized then begin
++      DefaultTasks := WizardSelectedTasks(False);
++      TasksInitialized := True;
++    end;
++    RestoreTaskDefaults(nil);
++    WizardSelectTasks(Saved);
++    UpdateDefaultsButton(nil);
++  end;
++  if CurPageID = wpReady then begin
++    if not LoadStringsFromFile(PlanFile + '.migration', Review) then
++      RaiseException('Could not read the installation summary.');
++    if GetArrayLength(Review) > 0 then begin
++      WizardForm.ReadyMemo.Lines.Add('');
++      for I := 0 to GetArrayLength(Review) - 1 do WizardForm.ReadyMemo.Lines.Add(Review[I]);
++    end;
++  end;
++  if (CurPageID = ScopePage.ID) and ScopeAuthorized then begin
++    Request('release', '');
++    ScopeAuthorized := False;
++  end;
++end;
++
++procedure FinishWork(Success: Boolean);
++var Details: TArrayOfString; I: Integer;
++begin
++    StopTimer(0, TimerID);
++    CloseProcessHandle(WorkProcess);
++    WorkProcess := 0;
++    Applying := False;
++    if CancelRequested then CancelSignal.Free;
++    PlanComplete := Success;
++    Progress.Hide;
++    if CancelRequested and not PlanComplete and FileExists(PlanFile + '.cancelled') then begin
++      DeleteFile(PlanFile + '.cancelled');
++      PostMessage(WizardForm.Handle, $0010, 0, 0);
++      Exit;
++    end;
++    if not PlanComplete and FileExists(PlanFile + '.cleanup') then begin
++      CleanupPending := True;
++      WizardForm.PageNameLabel.Caption := 'Previous installation cleanup incomplete';
++      WizardForm.PageDescriptionLabel.Caption := 'The replacement was installed. Review the cleanup error below.';
++      WizardForm.ReadyLabel.Caption := 'Close any running copies of Codex and retry. Exiting now may leave two installations.';
++      WizardForm.ReadyMemo.Lines.Clear;
++      if LoadStringsFromFile(PlanFile + '.cleanup', Details) then
++        for I := 0 to GetArrayLength(Details) - 1 do WizardForm.ReadyMemo.Lines.Add(Details[I]);
++      WizardForm.BackButton.Hide;
++      WizardForm.NextButton.Caption := 'Retry cleanup';
++    end;
++    if PlanComplete then begin
++      WizardForm.PageNameLabel.Caption := 'Completing the Codex Setup Wizard';
++      WizardForm.PageDescriptionLabel.Caption := 'Codex has been installed on your computer.';
++      WizardForm.ReadyLabel.Caption := 'Click Finish to exit Setup.';
++      WizardForm.ReadyMemo.Hide;
++      RunAfter := TNewCheckBox.Create(WizardForm);
++      RunAfter.Parent := WizardForm.ReadyMemo.Parent;
++      RunAfter.SetBounds(WizardForm.ReadyMemo.Left, WizardForm.ReadyMemo.Top, WizardForm.ReadyMemo.Width, ScaleY(24));
++      RunAfter.Caption := 'Launch Codex';
++      RunAfter.Checked := True;
++      WizardForm.BackButton.Hide;
++      WizardForm.NextButton.Hide;
++      WizardForm.CancelButton.Caption := SetupMessage(msgButtonFinish);
++      WizardForm.CancelButton.Default := True;
++      WizardForm.ActiveControl := WizardForm.CancelButton;
++    end;
++end;
++
++function NextButtonClick(CurPageID: Integer): Boolean;
++var Scope: String; Info: TShellExecuteInfo; Command: String;
++begin
++  Result := True;
++  if PlanFile = '' then Exit;
++  if CurPageID = ScopePage.ID then begin
++    if ScopePage.SelectedValueIndex = 1 then Scope := 'system' else Scope := 'user';
++    if (GetIniString('setup', 'existingScope', '', PlanFile) <> '') and
++       (GetIniString('setup', 'existingScope', '', PlanFile) <> Scope) then begin
++      Result := MsgBox('Switch installation location?' + #13#10#13#10 +
++        'From: ' + GetIniString('setup', 'existingDir', '', PlanFile) + #13#10 +
++        'To: ' + GetIniString('setup', Scope + 'Dir', '', PlanFile) + #13#10#13#10 +
++        'Setup will install and verify the new copy before removing the old one. Continue?',
++        mbConfirmation, MB_YESNO or MB_DEFBUTTON2) = IDYES;
++      if not Result then Exit;
++    end;
++    Result := Request('scope', Scope + ',' + IntToStr(WizardForm.Handle));
++    ScopeAuthorized := Result;
++    if Result then WizardForm.DirEdit.Text := GetIniString('setup', Scope + 'Dir', '', PlanFile);
++  end else if CurPageID = wpReady then begin
++    Result := False;
++    if PlanComplete then Exit;
++    CancelRequested := False;
++    Applying := True;
++    Progress.Show;
++    WizardForm.CancelButton.Visible := True;
++    WizardForm.CancelButton.Enabled := False;
++    if CleanupPending then begin
++      Command := 'cleanup';
++      Progress.SetText('Removing the previous installation...', '');
++    end else begin
++      Command := 'install';
++      Progress.SetText('Preparing the installation...', '');
++    end;
++    Progress.SetProgress(0, 1);
++    Info.Size := SizeOf(Info);
++    Info.Mask := $40;
++    Info.Owner := WizardForm.Handle;
++    Info.FileName := Launcher;
++    Info.Parameters := '/wizard-request ' + Session + ' ' + Command + ' "' + WizardSelectedTasks(False) + '"';
++    TimerID := StartTimer(0, 0, 150, CreateCallback(@RefreshProgress));
++    if (TimerID = 0) or not StartProcess(Info) then begin
++      if TimerID <> 0 then StopTimer(0, TimerID);
++      Applying := False;
++      Progress.Hide;
++      RaiseException('Could not start the installation request.');
++    end;
++    WorkProcess := Info.Process;
++  end;
++end;
++
++procedure CancelButtonClick(CurPageID: Integer; var Cancel, Confirm: Boolean);
++begin
++  if Reporting and CancelRequested then begin
++    Confirm := False;
++    Exit;
++  end;
++  if Applying then begin
++    Cancel := False;
++    Confirm := False;
++    if not CancelRequested and WizardForm.CancelButton.Enabled then begin
++      CancelRequested := True;
++      WizardForm.CancelButton.Enabled := False;
++      CancelSignal := CreateCustomForm;
++      CancelSignal.Caption := 'Codex Cancel ' + Session;
++      PutWindowValue(CancelSignal.Handle, 'CodexCancel', 1);
++    end;
++    Exit;
++  end;
++  if CancelRequested and not Applying and not PlanComplete then begin
++    Confirm := False;
++    Exit;
++  end;
++  if PlanComplete then begin
++    if RunAfter.Checked then Request('launch', '');
++    Cancel := True;
++    Confirm := False;
++  end;
++end;
++
++function ShouldSkipPage(PageID: Integer): Boolean;
++begin
++  Result := ((FromScopeLauncher() or (PlanFile <> '')) and (PageID = wpSelectDir)) or
++    ((PlanFile <> '') and (PageID = wpSelectProgramGroup));
++end;
++
+ function InitializeSetup(): Boolean;
+ var
+   RegKey: String;
+@@ -1328,7 +1645,8 @@
+       #define IncompatibleArchRootKey "HKLM64"
+     #endif
+ 
+-    if Result and not WizardSilent() then begin
++    if Result and not WizardSilent() and not FromScopeLauncher() and
++      (ExpandConstant('{param:CodexPlan|}') = '') then begin
+       RegKey := 'SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\' + copy('{#IncompatibleTargetAppId}', 2, 38) + '_is1';
+ 
+       if RegKeyExists({#IncompatibleArchRootKey}, RegKey) then begin
+@@ -1407,6 +1725,7 @@
+ // called before the wizard checks for running application
+ function PrepareToInstall(var NeedsRestart: Boolean): String;
+ begin
++  if PlanFile <> '' then begin Result := 'The wizard cannot install a second copy.'; Exit; end;
+   if IsNotBackgroundUpdate() then
+     StopTunnelServiceIfNeeded();
+ 

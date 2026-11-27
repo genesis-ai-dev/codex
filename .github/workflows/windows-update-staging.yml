@@ -1,0 +1,20 @@
+name: Windows update staging
+on:
+  pull_request:
+    paths:
+      - 'build/windows/setup/**'
+      - '.github/workflows/windows-update-staging.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  live-user-update:
+    runs-on: windows-2022
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Exercise released Windows clients against a loopback feed
+        shell: powershell
+        run: ./build/windows/setup/staging/hosted.ps1

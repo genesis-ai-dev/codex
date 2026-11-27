@@ -3,6 +3,8 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
+import { activePins } from "../../../../platform/codexPinPolicy/common/pinDecisions.js";
+import { IProductService } from '../../../../platform/product/common/productService.js';
 import { Action2, registerAction2 } from '../../../../platform/actions/common/actions.js';
 import { ServicesAccessor } from '../../../../platform/instantiation/common/instantiation.js';
 import { localize, localize2 } from '../../../../nls.js';
@@ -18,7 +20,6 @@ import { IProgressService, ProgressLocation } from '../../../../platform/progres
 import { asJson, IRequestService } from '../../../../platform/request/common/request.js';
 import { URI } from '../../../../base/common/uri.js';
 import { joinPath } from '../../../../base/common/resources.js';
-import { VSBuffer } from '../../../../base/common/buffer.js';
 import { CancellationToken } from '../../../../base/common/cancellation.js';
 import { DisposableStore } from '../../../../base/common/lifecycle.js';
 import { ProjectMetadata } from './codexTypes.js';
@@ -50,8 +51,6 @@ interface PinManagerContext {
 
 const RELEASE_PAGE_PATTERN = /^https:\/\/github\.com\/([^/]+)\/([^/]+)\/releases\/tag\/(.+)$/;
 
-/** JSON indentation used by codex-editor for metadata.json. */
-const METADATA_INDENT = 4;
 
 /**
  * Resolves a GitHub release page URL to a direct VSIX download URL.
@@ -112,6 +111,10 @@ registerAction2(class ManageExtensionPinsAction extends Action2 {
 	}
 
 	override async run(accessor: ServicesAccessor): Promise<void> {
+		if ((accessor.get(IProductService) as unknown as Record<string, unknown>)['codexProjectPinPolicy'] === 'ignore') {
+			accessor.get(INotificationService).info('Project extension pins are disabled in this Codex build.');
+			return;
+		}
 		const ctx: PinManagerContext = {
 			quickInputService: accessor.get(IQuickInputService),
 			fileService: accessor.get(IFileService),
@@ -174,21 +177,9 @@ async function readMetadata(ctx: PinManagerContext): Promise<ProjectMetadata | u
 	}
 }
 
-async function writeMetadata(ctx: PinManagerContext, updater: (metadata: ProjectMetadata) => void): Promise<void> {
-	const content = await ctx.fileService.readFile(ctx.metadataUri);
-	const metadata = JSON.parse(content.value.toString()) as ProjectMetadata;
-
-	if (!metadata.meta) {
-		metadata.meta = {};
-	}
-	if (!metadata.meta.pinnedExtensions) {
-		metadata.meta.pinnedExtensions = {};
-	}
-
-	updater(metadata);
-
-	const updated = JSON.stringify(metadata, null, METADATA_INDENT) + '\n';
-	await ctx.fileService.writeFile(ctx.metadataUri, VSBuffer.fromString(updated));
+async function writePinEdit(commandService: ICommandService, extensionId: string, pin: { version: string; url: string } | null): Promise<void> {
+    // Native queue reads the latest metadata and timestamps only this extension's decision.
+    await commandService.executeCommand('codex.conductor.setAdminPinIntent', {}, { [extensionId]: pin });
 }
 
 function showHub(quickInputService: IQuickInputService, metadata: ProjectMetadata): Promise<PinActionItem | undefined> {
@@ -225,7 +216,7 @@ function showHub(quickInputService: IQuickInputService, metadata: ProjectMetadat
 		}
 
 		// Pinned Extensions section
-		const pinned = metadata.meta?.pinnedExtensions;
+		const pinned = activePins(metadata.meta?.pinnedExtensions ?? {});
 		if (pinned && Object.keys(pinned).length > 0) {
 			items.push({ type: 'separator', label: localize('managePins.pinned', 'Pinned Extensions') });
 			const sortedIds = Object.keys(pinned).sort();
@@ -271,17 +262,6 @@ function showHub(quickInputService: IQuickInputService, metadata: ProjectMetadat
 	});
 }
 
-async function updateAdminIntent(commandService: ICommandService, pins: Record<string, { version: string; url: string }> | undefined, logService: ILogService): Promise<void> {
-	try {
-		if (pins && Object.keys(pins).length > 0) {
-			await commandService.executeCommand('codex.conductor.setAdminPinIntent', pins);
-		} else {
-			await commandService.executeCommand('codex.conductor.clearAdminPinIntent');
-		}
-	} catch (e: unknown) {
-		logService.warn(`[CodexPinManager] Failed to update admin pin intent: ${e}`);
-	}
-}
 
 async function addPin(ctx: PinManagerContext, commandService: ICommandService): Promise<void> {
 	// Step 1: Get URL from user
@@ -340,12 +320,7 @@ async function addPin(ctx: PinManagerContext, commandService: ICommandService): 
 
 	// Step 4: Write to metadata.json and signal intent
 	try {
-		let updatedPins: Record<string, { version: string; url: string }> | undefined;
-		await writeMetadata(ctx, (m) => {
-			m.meta!.pinnedExtensions![extensionId] = { version, url: resolvedUrl };
-			updatedPins = m.meta!.pinnedExtensions;
-		});
-		await updateAdminIntent(commandService, updatedPins, ctx.logService);
+		await writePinEdit(commandService, extensionId, { version, url: resolvedUrl });
 		ctx.logService.info(`[CodexPinManager] Pinned ${extensionId} to v${version}`);
 		ctx.notificationService.info(localize('managePins.pinned', 'Pinned {0} to v{1}.', extensionId, version));
 	} catch (e: unknown) {
@@ -355,7 +330,7 @@ async function addPin(ctx: PinManagerContext, commandService: ICommandService): 
 }
 
 async function removePin(ctx: PinManagerContext, metadata: ProjectMetadata, commandService: ICommandService): Promise<void> {
-	const pinned = metadata.meta?.pinnedExtensions;
+	const pinned = activePins(metadata.meta?.pinnedExtensions ?? {});
 	if (!pinned || Object.keys(pinned).length === 0) {
 		ctx.notificationService.info(localize('managePins.noPins', 'No pinned extensions to remove.'));
 		return;
@@ -391,12 +366,7 @@ async function removePin(ctx: PinManagerContext, metadata: ProjectMetadata, comm
 
 	// Step 3: Update metadata.json and signal intent
 	try {
-		let updatedPins: Record<string, { version: string; url: string }> | undefined;
-		await writeMetadata(ctx, (m) => {
-			delete m.meta!.pinnedExtensions![extensionId];
-			updatedPins = m.meta!.pinnedExtensions;
-		});
-		await updateAdminIntent(commandService, updatedPins, ctx.logService);
+		await writePinEdit(commandService, extensionId, null);
 		ctx.logService.info(`[CodexPinManager] Removed pin for ${extensionId}`);
 		ctx.notificationService.info(localize('managePins.removed', 'Removed pin for {0}.', extensionId));
 	} catch (e: unknown) {
@@ -420,3 +390,12 @@ async function syncChanges(
 		notificationService.info(localize('managePins.syncFallback', 'Sync manually to share pin changes with your team.'));
 	}
 }
+
+registerAction2(class RetryProjectPinRecoveryAction extends Action2 {
+    constructor() {
+        super({ id: 'codex.retryProjectPinRecovery', title: localize2('retryProjectPinRecovery', 'Retry Project Extension Recovery'), category: localize2('codexCategory', 'Codex'), f1: true });
+    }
+    async run(accessor: ServicesAccessor): Promise<void> {
+        await accessor.get(ICommandService).executeCommand('codex.conductor.retryPinRecovery');
+    }
+});
