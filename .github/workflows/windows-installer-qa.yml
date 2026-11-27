@@ -1,98 +1,146 @@
-name: Package Windows scope installer for QA
+name: Pin recovery test artifacts
 on:
   push:
     branches: [codex/windows-scope-installer-qa]
+  workflow_dispatch:
 permissions:
   contents: read
-  actions: read
+concurrency:
+  group: pin-recovery-test-${{ github.ref }}
+  cancel-in-progress: true
+env:
+  BUILD_SOURCEVERSION: ddad3bf19aef2e005c4afab563e7c777ccf955a7
+  APP_NAME: Codex
+  BINARY_NAME: codex
+  GH_REPO_PATH: ${{ github.repository }}
+  ORG_NAME: ${{ github.repository_owner }}
+  RELEASE_VERSION: '1.108.16453'
+  CUSTOM_RELEASE_VERSION: '1.108.16453'
+  VSCODE_ARCH: x64
+  VSCODE_QUALITY: stable
+  OS_NAME: windows
+  SHOULD_BUILD: 'yes'
+  SHOULD_BUILD_REH: 'no'
+  SHOULD_BUILD_REH_WEB: 'no'
+  CI_BUILD: 'yes'
 jobs:
-  bundle:
-    runs-on: windows-2022
+  compile:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
-      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
         with:
-          repository: microsoft/vscode
-          ref: 585eba7c0c34fd6b30faac7c62a42050bfbc0086
-          path: vscode
-          persist-credentials: false
-          sparse-checkout: |
-            build/win32
-      - uses: actions/download-artifact@v4
+          node-version-file: .nvmrc
+      - uses: actions/setup-python@v5
         with:
-          name: Codex-scope-installer-x64
-          run-id: 45481313906
-          github-token: ${{ github.token }}
-          path: previous
-      - name: Recover application files from the previous verified QA installer
-        shell: powershell
+          python-version: '3.11'
+      - name: Native build prerequisites
+        run: sudo apt-get update -y && sudo apt-get install -y libkrb5-dev
+      - name: Get pinned upstream source
+        run: ./get_repo.sh
+      - name: Compile reviewed source
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: ./build.sh
+      - name: Archive compilation
         run: |
-          $previous = Get-Item previous/CodexInstall-*.exe
-          if ((Get-FileHash $previous).Hash -ne ((Get-Content previous/installer.sha256) -split ' ')[0]) { throw 'Previous package checksum mismatch' }
-          $payload = "$env:TEMP\codex-qa-user.exe"
-          $assembly = [Reflection.Assembly]::LoadFile($previous.FullName)
-          $inputFile = $assembly.GetManifestResourceStream('user')
-          $output = [IO.File]::Create($payload)
-          try { $inputFile.CopyTo($output) } finally { $inputFile.Dispose(); $output.Dispose() }
-          $dir = "$env:TEMP\codex-qa-restore"
-          $proc = Start-Process $payload -ArgumentList "/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /NOICONS /TASKS= /DIR=`"$dir`"" -Wait -PassThru
-          if ($proc.ExitCode) { throw 'Could not restore QA payload' }
-          Copy-Item $dir VSCode-win32-x64 -Recurse
-          Remove-Item VSCode-win32-x64/unins*.*
-          $proc = Start-Process "$dir\unins000.exe" -ArgumentList '/VERYSILENT /NORESTART' -Wait -PassThru
-          if ($proc.ExitCode) { throw 'Could not clean up temporary installation' }
-      - name: Restore verified application and prepare the shipping Inno script
-        shell: bash
-        run: |
-          cp -r src/stable/resources vscode/
-          cp LICENSE vscode/LICENSE.txt
-          ./build/windows/rtf/make.sh
-          sed -i 's/\r$//' vscode/build/win32/code.iss patches/windows/interactive-scope-setup.patch patches/windows/win7.patch
-          git -C vscode apply ../patches/windows/interactive-scope-setup.patch
-          git -C vscode apply --unidiff-zero ../patches/windows/win7.patch
-          sed -i -e 's|https://code.visualstudio.com|https://codex.com|g' -e 's|Microsoft Corporation|Codex|g' vscode/build/win32/code.iss
-          curl -fsSL https://registry.npmjs.org/innosetup/-/innosetup-6.4.1.tgz -o compiler.tgz
-          test "$(openssl dgst -sha512 -binary compiler.tgz | openssl base64 -A)" = 'Bh/dNlyyFsFKBGoTf19n1msPnm4Njfb0CWVirw2CV1MSJXYy0ajRI+xjo/Yr9DtZFLLafhnwm1ZsxTu309F8lQ=='
-          mkdir compiler && tar -xzf compiler.tgz --strip-components=1 -C compiler
-      - name: Compile both scoped payloads and verify the compact installer
-        shell: powershell
-        run: |
-          $src = (Resolve-Path VSCode-win32-x64).Path
-          $repo = (Resolve-Path vscode).Path
-          $manifest = "$src\resources\app\product.json"
-          $p = Get-Content $manifest -Raw | ConvertFrom-Json
-          $v = '1.108.16453'
-          if ($p.version -ne $v -or $p.codexProjectPinPolicy -ne 'enforce') { throw 'Wrong QA application' }
-          $assets = (New-Item -ItemType Directory assets).FullName
-          foreach ($scope in 'user','system') {
-            $dir = (New-Item -ItemType Directory "scope-$scope").FullName
-            $p | Add-Member target $scope -Force
-            [IO.File]::WriteAllText("$dir\product.json", ($p | ConvertTo-Json -Depth 100))
-            $id = if ($scope -eq 'user') { $p.win32x64UserAppId } else { $p.win32x64AppId }
-            $name = if ($scope -eq 'user') { $p.win32NameVersion + ' (User)' } else { $p.win32NameVersion }
-            $defs = @{NameLong=$p.nameLong; NameShort=$p.nameShort; DirName=$p.win32DirName; Version=$v; RawVersion=$v; Commit=$p.commit; NameVersion=$name; ExeBasename=$p.nameShort; RegValueName=$p.win32RegValueName; ShellNameShort=$p.win32ShellNameShort; AppMutex=$p.win32MutexName; TunnelMutex=$p.win32TunnelMutex; TunnelServiceMutex=$p.win32TunnelServiceMutex; TunnelApplicationName=$p.tunnelApplicationName; ApplicationName=$p.applicationName; Arch='x64'; AppId=$id; IncompatibleTargetAppId=$p.win32x64AppId; AppUserId=$p.win32AppUserModelId; ArchitecturesAllowed='x64'; ArchitecturesInstallIn64BitMode='x64'; SourceDir=$src; RepoDir=$repo; OutputDir=$dir; InstallTarget=$scope; ProductJsonPath="$dir\product.json"; Quality='stable'}
-            $arguments = @($defs.Keys | ForEach-Object { "/D$_=$($defs[$_])" })
-            & ./compiler/bin/ISCC.exe /Qp @arguments "$repo\build\win32\code.iss"
-            if ($LASTEXITCODE) { throw "Inno compile failed for $scope" }
-            $prefix = if ($scope -eq 'user') { 'CodexUserSetup' } else { 'CodexSetup' }
-            Move-Item "$dir\VSCodeSetup.exe" "$assets\$prefix-x64-$v.exe"
-          }
-          ./build/windows/setup/bundle.ps1 -Arch x64 -Version $v -ProductPath $manifest -Assets $assets
-          $exe = "CodexInstall-x64-$v.exe"
-          "$((Get-FileHash "$assets\$exe").Hash.ToLowerInvariant()) *$exe" | Set-Content "$assets\installer.sha256" -Encoding ascii
+          find vscode -type f -not -path '*/node_modules/*' -not -path 'vscode/.build/node/*' -not -path 'vscode/.git/*' > vscode.txt
+          [ ! -d vscode/.build/extensions/node_modules ] || echo vscode/.build/extensions/node_modules >> vscode.txt
+          echo vscode/.git >> vscode.txt
+          tar -czf vscode.tar.gz -T vscode.txt
       - uses: actions/upload-artifact@v4
         with:
-          name: Codex-scope-installer-x64
+          name: pin-recovery-compiled
+          path: vscode.tar.gz
+          retention-days: 3
+  windows:
+    needs: compile
+    runs-on: windows-2022
+    timeout-minutes: 90
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - uses: actions/download-artifact@v4
+        with:
+          name: pin-recovery-compiled
+      - name: Package Windows x64
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          npm_config_arch: x64
+          npm_config_target_arch: x64
+        run: ./build/windows/package.sh
+      - name: Verify compiled policy
+        run: |
+          node -e "const p=require('./VSCode-win32-x64/resources/app/product.json');if(p.codexProjectPinPolicy!=='enforce') throw Error('Wrong policy')"
+          echo "$BUILD_SOURCEVERSION" > VSCode-win32-x64/TEST-BUILD-COMMIT.txt
+      - name: Build unsigned user and system installers
+        run: |
+          ./build/windows/rtf/make.sh
+          cd vscode
+          npm run gulp vscode-win32-x64-inno-updater
+          npm run gulp vscode-win32-x64-user-setup
+          npm run gulp vscode-win32-x64-system-setup
+          cd ..
+          mkdir -p assets
+          cp vscode/.build/win32-x64/user-setup/VSCodeSetup.exe assets/CodexUserSetup-x64-1.108.16453.exe
+          cp vscode/.build/win32-x64/system-setup/VSCodeSetup.exe assets/CodexSetup-x64-1.108.16453.exe
+          node -e "const fs=require('fs');for(const target of ['user','system']){const p=JSON.parse(fs.readFileSync('vscode/.build/win32-x64/'+target+'-setup/product.json','utf8'));if(p.codexProjectPinPolicy!=='enforce')throw Error('Wrong installer policy');}"
+          7z a -tzip assets/Codex-Windows-x64-ddad3bf.zip ./VSCode-win32-x64
+          pwsh -NoProfile -File build/windows/setup/bundle.ps1 -Arch x64 -Version 1.108.16453
+          cd assets
+          sha256sum CodexInstall-*.exe *.zip > SHA256SUMS.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Codex-Windows-x64-enforce-test
           path: |
             assets/CodexInstall-*.exe
-            assets/installer.sha256
+            assets/*.zip
+            assets/SHA256SUMS.txt
           retention-days: 7
           if-no-files-found: error
-      - name: Exercise the shipping Inno wizard up to Ready to Install
-        shell: powershell
-        run: ./build/windows/setup/staging/hosted-wizard.ps1 -Package (Get-Item assets/CodexInstall-*.exe).FullName
-      - name: Verify approved machine operations on the disposable VM
-        shell: powershell
-        run: ./build/windows/setup/staging/test-machine-worker.ps1 -Package (Get-Item assets/CodexInstall-*.exe).FullName
+  mac:
+    runs-on: macos-15
+    timeout-minutes: 180
+    env:
+      OS_NAME: osx
+      VSCODE_ARCH: arm64
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: ./get_repo.sh
+      - run: ./build.sh
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - run: |
+          mkdir -p qa-mac
+          app="$PWD/VSCode-darwin-arm64/Codex.app"
+          codesign --force --deep --sign - "$app"
+          codesign --verify --deep "$app"
+          ditto -c -k --keepParent "$app" qa-mac/Codex-darwin-arm64-ddad3bf.zip
+          bash build/osx/dmg/build.sh "$app" "$PWD/qa-mac/Codex-darwin-arm64-ddad3bf.dmg"
+          hdiutil verify qa-mac/*.dmg
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Codex-macOS-arm64-test
+          path: qa-mac/*
+          retention-days: 7
