@@ -236,6 +236,8 @@ internal static partial class Setup {
                 "systemLabel=" + ScopeLabel(initial, true), "userLabel=" + ScopeLabel(initial, false),
                 "userTasks=" + PreviousTasks(initial, false, ScopeId(false)),
                 "systemTasks=" + PreviousTasks(initial, true, ScopeId(true)),
+                "existingScope=" + (initial.Count == 1 ? (initial[0].Machine ? "system" : "user") : ""),
+                "existingDir=" + (initial.Count == 1 ? initial[0].Root : ""),
                 "userDir=" + Destination(initial, false), "systemDir=" + Destination(initial, true),
                 "launcher=" + assembly.Location, "session=" + token }, System.Text.Encoding.Unicode);
             // Seed the outer wizard with the code.iss defaults before applying the

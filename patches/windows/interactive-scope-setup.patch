@@ -10,7 +10,7 @@ diff --git a/build/win32/code.iss b/build/win32/code.iss
  WizardImageFile="{#RepoDir}\resources\win32\inno-big-100.bmp,{#RepoDir}\resources\win32\inno-big-125.bmp,{#RepoDir}\resources\win32\inno-big-150.bmp,{#RepoDir}\resources\win32\inno-big-175.bmp,{#RepoDir}\resources\win32\inno-big-200.bmp,{#RepoDir}\resources\win32\inno-big-225.bmp,{#RepoDir}\resources\win32\inno-big-250.bmp"
  WizardSmallImageFile="{#RepoDir}\resources\win32\inno-small-100.bmp,{#RepoDir}\resources\win32\inno-small-125.bmp,{#RepoDir}\resources\win32\inno-small-150.bmp,{#RepoDir}\resources\win32\inno-small-175.bmp,{#RepoDir}\resources\win32\inno-small-200.bmp,{#RepoDir}\resources\win32\inno-small-225.bmp,{#RepoDir}\resources\win32\inno-small-250.bmp"
  SetupIconFile={#RepoDir}\resources\win32\code.ico
-@@ -1305,6 +1305,314 @@
+@@ -1305,6 +1305,323 @@
  end;
  
  // Don't allow installing conflicting architectures
@@ -252,6 +252,15 @@ diff --git a/build/win32/code.iss b/build/win32/code.iss
 +  if PlanFile = '' then Exit;
 +  if CurPageID = ScopePage.ID then begin
 +    if ScopePage.SelectedValueIndex = 1 then Scope := 'system' else Scope := 'user';
++    if (GetIniString('setup', 'existingScope', '', PlanFile) <> '') and
++       (GetIniString('setup', 'existingScope', '', PlanFile) <> Scope) then begin
++      Result := MsgBox('Switch installation location?' + #13#10#13#10 +
++        'From: ' + GetIniString('setup', 'existingDir', '', PlanFile) + #13#10 +
++        'To: ' + GetIniString('setup', Scope + 'Dir', '', PlanFile) + #13#10#13#10 +
++        'Setup will install and verify the new copy before removing the old one. Continue?',
++        mbConfirmation, MB_YESNO or MB_DEFBUTTON2) = IDYES;
++      if not Result then Exit;
++    end;
 +    Result := Request('scope', Scope + ',' + IntToStr(WizardForm.Handle));
 +    ScopeAuthorized := Result;
 +    if Result then WizardForm.DirEdit.Text := GetIniString('setup', Scope + 'Dir', '', PlanFile);
@@ -325,7 +334,7 @@ diff --git a/build/win32/code.iss b/build/win32/code.iss
  function InitializeSetup(): Boolean;
  var
    RegKey: String;
-@@ -1328,7 +1636,8 @@
+@@ -1328,7 +1645,8 @@
        #define IncompatibleArchRootKey "HKLM64"
      #endif
  
@@ -335,7 +344,7 @@ diff --git a/build/win32/code.iss b/build/win32/code.iss
        RegKey := 'SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\' + copy('{#IncompatibleTargetAppId}', 2, 38) + '_is1';
  
        if RegKeyExists({#IncompatibleArchRootKey}, RegKey) then begin
-@@ -1407,6 +1716,7 @@
+@@ -1407,6 +1725,7 @@
  // called before the wizard checks for running application
  function PrepareToInstall(var NeedsRestart: Boolean): String;
  begin

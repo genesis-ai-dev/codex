@@ -146,7 +146,18 @@ internal static partial class Setup {
     }
 
     internal static bool DefaultMachineScope(IEnumerable<Installation> installed) {
-        return installed.Any(i => i.Machine);
+        if (!installed.Any(i => i.Machine)) return false;
+        if (!installed.Any(i => !i.Machine)) return true;
+        Version newestUser = null, newestMachine = null;
+        foreach (var item in installed) {
+            Version version;
+            if (!Version.TryParse(item.Version, out version)) return true;
+            version = new Version(version.Major, version.Minor, Math.Max(0, version.Build), Math.Max(0, version.Revision));
+            if (item.Machine) {
+                if (newestMachine == null || version > newestMachine) newestMachine = version;
+            } else if (newestUser == null || version > newestUser) newestUser = version;
+        }
+        return newestMachine >= newestUser;
     }
 
     private static string DisplayableVersion(string version) {

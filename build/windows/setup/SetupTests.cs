@@ -38,6 +38,13 @@ internal static class SetupTests {
             system.Version = "2.10";
             var both = new List<Setup.Installation> { system, user };
             if (Setup.ScopeLabel(both, false) != "Current User (installed: 1.9)" || Setup.ScopeLabel(both, true) != "All Users (installed: 2.10)") return 1;
+            if (!Setup.DefaultMachineScope(both)) return 1;
+            user.Version = "2.11";
+            if (Setup.DefaultMachineScope(both)) return 1;
+            user.Version = "2.10.0";
+            if (!Setup.DefaultMachineScope(both)) return 1;
+            system.Version = null;
+            if (!Setup.DefaultMachineScope(both)) return 1;
             foreach (var inventory in new[] { new List<Setup.Installation>(), registered,
                 new List<Setup.Installation> {system}, both }) {
                 foreach (bool machine in new[] {false, true}) {
