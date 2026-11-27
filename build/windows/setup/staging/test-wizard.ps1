@@ -156,6 +156,24 @@ if ($PlannedInstall) {
         Press $controls 'I accept the agreement'
         Next-Page $controls
         $controls = Wait-Page 'Select Installation Scope'
+        $list = $controls | Where-Object Class -eq TNewCheckListBox | Select-Object -First 1
+        $list.Key(35); $list.Key(32)
+        foreach ($answer in 'No','Yes') {
+            Next-Page $controls
+            $deadline = [DateTime]::UtcNow.AddSeconds(10)
+            do {
+                Start-Sleep -Milliseconds 200
+                $buttons = foreach ($dialog in ([WizardWindow]::Visible([IntPtr]::Zero) | Where-Object Class -eq '#32770')) {
+                    $items = [WizardWindow]::Visible($dialog.Handle)
+                    if ($items.Text -contains 'Yes' -and $items.Text -contains 'No') { $items }
+                }
+            } until ($buttons -or [DateTime]::UtcNow -gt $deadline)
+            if (!$buttons) { throw 'Missing scope-change confirmation' }
+            Press $buttons $answer
+            Start-Sleep -Seconds 1
+            $controls = Wait-Page 'Select Installation Scope'
+        }
+        $list.Key(36); $list.Key(32)
         Next-Page $controls
         foreach ($previous in @('Select Installation Scope','Ready to Install')) {
             $controls = Wait-Page 'Select Additional Tasks'
